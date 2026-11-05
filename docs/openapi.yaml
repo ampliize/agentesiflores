@@ -1,0 +1,129 @@
+openapi: 3.1.0
+info:
+  title: iFlores Equipe Virtual - API aberta
+  version: 0.1.0
+  description: |
+    API dos agentes de IA da iFlores (Gerente, Gestor de Tráfego, Social Media, Atendente).
+    Autenticação da loja com `Authorization: Bearer ifa_...` (chave de API) ou token de sessão do painel.
+    Rotas `/platform/*` exigem o header `X-Platform-Key`.
+servers:
+  - url: /api/v1
+components:
+  securitySchemes:
+    apiKey: { type: http, scheme: bearer }
+    platformKey: { type: apiKey, in: header, name: X-Platform-Key }
+  parameters:
+    agent:
+      name: agent
+      in: path
+      required: true
+      schema: { type: string, enum: [gerente, trafego, social, atendente] }
+security: [{ apiKey: [] }]
+paths:
+  /platform/tenants:
+    post:
+      summary: Cria uma loja (tenant) e retorna a chave de API
+      security: [{ platformKey: [] }]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string }
+                iflores_store_id: { type: string }
+                iflores: { type: object, properties: { base_url: { type: string }, token: { type: string } } }
+      responses: { '201': { description: '{ tenant, api_key, panel_url }' } }
+  /platform/tenants/{storeId}/session:
+    post:
+      summary: Gera token de sessão (8 h) para abrir o painel em iframe
+      security: [{ platformKey: [] }]
+      parameters: [{ name: storeId, in: path, required: true, schema: { type: string } }]
+      responses: { '200': { description: '{ token, panel_url, expires_in }' } }
+  /me:
+    get: { summary: Dados da loja e status da IA, responses: { '200': { description: OK } } }
+    patch: { summary: Atualiza nome e marca (brand.primary), responses: { '200': { description: OK } } }
+  /api-key/rotate:
+    post: { summary: Gera nova chave de API, responses: { '200': { description: '{ api_key }' } } }
+  /team:
+    get: { summary: Visão de monitoramento (agentes, status, notas, KPIs, último relatório), responses: { '200': { description: OK } } }
+  /agents:
+    get: { summary: Lista agentes com configuração, responses: { '200': { description: OK } } }
+  /agents/{agent}/config:
+    parameters: [{ $ref: '#/components/parameters/agent' }]
+    get: { summary: Configuração do agente, responses: { '200': { description: OK } } }
+    put: { summary: Atualiza configuração (merge parcial; inclui enabled), responses: { '200': { description: OK } } }
+  /agents/{agent}/run:
+    parameters: [{ $ref: '#/components/parameters/agent' }]
+    post:
+      summary: Executa o agente agora
+      requestBody: { content: { application/json: { schema: { type: object, properties: { sendReport: { type: boolean }, extra: { type: string } } } } } }
+      responses: { '200': { description: '{ ok, result }' } }
+  /tasks:
+    get:
+      summary: Lista tarefas
+      parameters:
+        - { name: status, in: query, schema: { type: string, enum: [todo, doing, review, done, cancelled] } }
+        - { name: agent, in: query, schema: { type: string } }
+      responses: { '200': { description: OK } }
+    post:
+      summary: Delegar tarefa a um agente
+      requestBody: { content: { application/json: { schema: { type: object, required: [agent, title], properties: { agent: { type: string }, title: { type: string }, priority: { type: string, enum: [normal, alta] } } } } } }
+      responses: { '201': { description: Criada } }
+  /tasks/{id}:
+    patch: { summary: Atualiza status/título/prioridade, parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { '200': { description: OK } } }
+  /tasks/{id}/approve:
+    post: { summary: Aprova sugestão do Tráfego (pausar/escalar/criar campanha), parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { '200': { description: OK } } }
+  /activity:
+    get: { summary: Feed de atividades, parameters: [{ name: limit, in: query, schema: { type: integer } }, { name: agent, in: query, schema: { type: string } }], responses: { '200': { description: OK } } }
+  /stream:
+    get: { summary: Server-Sent Events em tempo real (aceita ?token=), responses: { '200': { description: text/event-stream } } }
+  /kpis:
+    get: { summary: Indicadores vs metas, responses: { '200': { description: OK } } }
+  /reports:
+    get: { summary: Relatórios do Gerente e análises do Tráfego, parameters: [{ name: agent, in: query, schema: { type: string } }], responses: { '200': { description: OK } } }
+  /chat:
+    post:
+      summary: Envia mensagem de cliente para a Atendente (simulador ou outro canal)
+      requestBody: { content: { application/json: { schema: { type: object, required: [text], properties: { text: { type: string }, contact: { type: string }, name: { type: string }, channel: { type: string, enum: [simulador, api] } } } } } }
+      responses: { '200': { description: '{ conversation_id, reply }' } }
+  /conversations:
+    get: { summary: Lista conversas, responses: { '200': { description: OK } } }
+  /conversations/{id}/messages:
+    get: { summary: Mensagens da conversa, parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { '200': { description: OK } } }
+  /conversations/{id}/mode:
+    post: { summary: 'Alterna entre IA e humano ({ mode: bot|humano })', parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { '200': { description: OK } } }
+  /posts:
+    get: { summary: Peças de conteúdo, parameters: [{ name: status, in: query, schema: { type: string } }], responses: { '200': { description: OK } } }
+  /posts/{id}/approve:
+    post: { summary: Aprova e agenda, parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { '200': { description: OK } } }
+  /posts/{id}/reject:
+    post: { summary: 'Com { feedback } refaz a peça; sem corpo, descarta', parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { '200': { description: OK } } }
+  /posts/{id}/publish-now:
+    post: { summary: Publica no próximo ciclo, parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { '200': { description: OK } } }
+  /campaigns:
+    get: { summary: Campanhas e última análise, responses: { '200': { description: OK } } }
+  /campaigns/{externalId}/{action}:
+    post:
+      summary: Pausar ou escalar campanha manualmente
+      parameters:
+        - { name: externalId, in: path, required: true, schema: { type: string } }
+        - { name: action, in: path, required: true, schema: { type: string, enum: [pause, scale] } }
+      responses: { '200': { description: OK } }
+  /integrations/{name}:
+    put:
+      summary: Conecta e testa integração
+      parameters: [{ name: name, in: path, required: true, schema: { type: string, enum: [iflores, whatsapp, meta_ads, instagram] } }]
+      responses: { '200': { description: '{ test, tenant }' } }
+    delete:
+      summary: Desconecta integração
+      parameters: [{ name: name, in: path, required: true, schema: { type: string } }]
+      responses: { '200': { description: OK } }
+  /webhook:
+    put: { summary: 'Webhook de saída ({ url, enabled, events })', responses: { '200': { description: OK } } }
+  /events:
+    post:
+      summary: Eventos vindos da iFlores
+      requestBody: { content: { application/json: { schema: { type: object, required: [type], properties: { type: { type: string, enum: [order.created, order.delivered, product.out_of_stock, review.created] }, data: { type: object } } } } } }
+      responses: { '202': { description: Aceito } }

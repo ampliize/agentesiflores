@@ -1,0 +1,18 @@
+{
+  "name": "iflores-equipe-virtual",
+  "version": "0.1.0",
+  "description": "Equipe Virtual iFlores: 4 agentes de IA (Gerente, Tráfego, Social Media, Atendente) + painel de integração + API aberta",
+  "type": "module",
+  "main": "src/server.js",
+  "engines": { "node": ">=22.5" },
+  "scripts": {
+    "start": "node --no-warnings src/server.js",
+    "dev": "node --no-warnings --watch src/server.js",
+    "test": "node --no-warnings --test test/*.test.js"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^1.5.0",
+    "@resvg/resvg-js": "^2.6.2",
+    "express": "^5.1.0"
+  }
+}

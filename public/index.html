@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Equipe Virtual iFlores</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🌷</text></svg>">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <div id="login" class="login hidden">
+    <div class="login-card">
+      <div class="logo">🌷 <b>iFlores</b> <span>Equipe Virtual</span></div>
+      <p>Este painel abre automaticamente dentro da iFlores. Para testar localmente, crie uma loja de demonstração.</p>
+      <button class="btn primary" id="btnDemo">Abrir loja de demonstração</button>
+    </div>
+  </div>
+
+  <div id="app" class="hidden">
+    <header class="topbar">
+      <div class="brand">🌷 <b>Equipe Virtual</b> <span id="storeName" class="muted"></span></div>
+      <nav id="tabs" class="tabs" role="tablist">
+        <a href="#team" data-tab="team">Equipe</a>
+        <a href="#tasks" data-tab="tasks">Tarefas <span class="badge" id="bTasks"></span></a>
+        <a href="#content" data-tab="content">Conteúdo <span class="badge" id="bContent"></span></a>
+        <a href="#chat" data-tab="chat">Atendimento</a>
+        <a href="#ads" data-tab="ads">Tráfego</a>
+        <a href="#goals" data-tab="goals">Metas</a>
+        <a href="#config" data-tab="config">Configurar</a>
+        <a href="#integrations" data-tab="integrations">Integrações</a>
+      </nav>
+      <div class="ai-pill" id="aiPill"></div>
+    </header>
+    <main id="view" class="view"></main>
+  </div>
+
+  <dialog id="modal"><form method="dialog" id="modalBody"></form></dialog>
+  <div id="toast" class="toast"></div>
+  <script src="/app.js" type="module"></script>
+</body>
+</html>
