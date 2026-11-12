@@ -1,7 +1,7 @@
 // ALEX — gerente da floricultura: executa alterações por conversa e orienta o negócio com dados.
 // Toda recomendação responde: o que aconteceu, hipótese, o que fazer agora, o que o Alex pode
 // executar e quando revisar o resultado.
-import { db } from '../store.js';
+import { db, serial } from '../store.js';
 import { getConfig, active, AGENTS } from '../team.js';
 import { log, working } from '../events.js';
 import { createTask, listTasks, updateTask, getTask } from '../tasks.js';
@@ -300,7 +300,8 @@ function llmTools(tenantId, comando) {
   return tools;
 }
 
-export async function conversar(tenantId, texto) {
+export function conversar(tenantId, texto) { return serial(`${tenantId}:chat:alex`, () => conversarAgora(tenantId, texto)); }
+async function conversarAgora(tenantId, texto) {
   if (!active(tenantId, 'alex')) return { texto: 'O Alex não está contratado ou está pausado nesta loja.' };
   const chat = getChat(tenantId);
   chat.mensagens.push({ role: 'user', texto, em: now() });

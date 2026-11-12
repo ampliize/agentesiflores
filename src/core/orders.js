@@ -3,7 +3,9 @@
 // chega pelo evento 'payment.confirmed'. O link enviado NÃO significa pagamento confirmado.
 import { db } from './store.js';
 import { uid, now, localDate, addDays, round2, norm } from './util.js';
-import { log } from './events.js';
+import { log, publish } from './events.js';
+import { enfileirar } from './outbox.js';
+import { salvarContato, recalcular, normTel } from './crm.js';
 
 export const getOrder = (id) => db().get('orders', id);
 export const listOrders = (tenantId, filter) => db().list('orders', tenantId, filter).sort((a, b) => (a.created_at < b.created_at ? 1 : -1));
@@ -31,7 +33,8 @@ export function criarPedido(tenantId, dados) {
     pagamento: { status: 'pendente', link: `https://pagar.iflores.app.br/p/${id}`, enviado_em: null },
     created_at: now(),
   });
-  upsertCliente(tenantId, { contato: dados.contato, nome: dados.comprador, ultima_compra: localDate(), ocasiao: dados.ocasiao, data_ocasiao: dados.data });
+  upsertCliente(tenantId, { contato: dados.contato, nome: dados.comprador, ocasiao: dados.ocasiao, data_ocasiao: dados.data });
+  enfileirar(tenantId, 'pedido.criar', { order_id: id }, `pedido:${id}`);
   return order;
 }
 
@@ -41,6 +44,8 @@ export function confirmarPagamento(tenantId, orderId, origem = 'sistema') {
   if (o.pagamento.status === 'confirmado') return o;
   const upd = db().put('orders', { ...o, status: 'pago', pagamento: { ...o.pagamento, status: 'confirmado', confirmado_em: now(), origem } });
   registrarVendaNoDia(tenantId, upd);
+  recalcular(tenantId, o.contato);
+  publish(tenantId, 'pedido.pago', { order_id: o.id });
   log(tenantId, 'flora', `Pagamento do pedido #${o.numero} confirmado pelo ${origem === 'sistema' ? 'sistema de pagamento' : origem}`, { type: 'pagamento', kind: 'info', level: 'success', data: { order_id: o.id } });
   return upd;
 }
@@ -53,11 +58,19 @@ function registrarVendaNoDia(tenantId, o) {
   db().put('dias', d);
 }
 
+/** Contato do CRM a partir de uma conversa ou pedido (não sobrescreve dados já preenchidos com vazio). */
 export function upsertCliente(tenantId, { contato, nome, ...rest }) {
-  const id = `${tenantId}:${contato}`;
-  const c = db().get('customers', id);
-  return db().put('customers', { ...(c || { id, tenant_id: tenantId, contato, optin_marketing: false, historico: [] }), ...(nome ? { nome } : {}), ...Object.fromEntries(Object.entries(rest).filter(([, v]) => v != null)) });
+  return salvarContato(tenantId, { contato, ...(nome ? { nome } : {}), ...Object.fromEntries(Object.entries(rest).filter(([, v]) => v != null)) }, { origem: 'flora' });
 }
+
+export function mudarStatus(tenantId, orderId, status) {
+  const o = getOrder(orderId); if (!o || o.tenant_id !== tenantId) throw Object.assign(new Error('Pedido não encontrado'), { status: 404 });
+  const upd = db().put('orders', { ...o, status, [`${status}_em`]: now() });
+  publish(tenantId, 'pedido.status', { order_id: o.id, status });
+  recalcular(tenantId, o.contato);
+  return upd;
+}
+export { normTel };
 
 // ---------------- indicadores ----------------
 export function periodo(tenantId, ini, fim) {

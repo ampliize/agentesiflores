@@ -6,7 +6,11 @@ import { listActivity, currentWork, log } from './events.js';
 import { createTask, listTasks, updateTask, getTask } from './tasks.js';
 import { listProducts, listInsumos, getSettings, insumoMap, composicaoTexto, disponibilidade, listChanges, undoChange, getProduct, applyChanges } from './catalog.js';
 import { analisarProduto, precoSugerido, impactoDesconto, margens, resumoPeriodo, diagnosticoMargem, params } from './finance.js';
-import { listOrders, confirmarPagamento, getOrder, topPerguntas, periodo } from './orders.js';
+import { listOrders, confirmarPagamento, getOrder, topPerguntas, periodo, mudarStatus } from './orders.js';
+import * as crm from './crm.js';
+import * as aut from './automacoes.js';
+import { listarOutbox } from './outbox.js';
+import { publish } from './events.js';
 import * as alex from './agents/alex.js';
 import * as sol from './agents/sol.js';
 import * as flora from './agents/flora.js';
@@ -133,7 +137,7 @@ on('POST', '/agentes/:a/executar', async ({ t, p }) => {
   if (a === 'alex') return alex.rotina(t);
   if (a === 'mari') return { pecas: (await mari.planejarSemana(t, { motivo: 'acionado pelo dono' })).length };
   if (a === 'caio') return caio.analisar(t, { motivo: 'acionado pelo dono' });
-  if (a === 'flora') return flora.rotina(t);
+  if (a === 'flora') return { automacoes: (await aut.executarAutomacoes(t)).length };
   return { ok: true };
 });
 on('POST', '/rotinas', async ({ t }) => ({ feitos: await rotinas(t, { forcar: true }) }));
@@ -159,8 +163,8 @@ on('PUT', '/insumos/:id', ({ t, p, b }) => { const i = own(db().get('insumos', p
 on('PUT', '/produtos/:id/custo', ({ t, p, b }) => { const pr = own(getProduct(p.id), t); applyChanges(t, { actor: 'sol', descricao: `Custo de ${pr.nome} atualizado`, ops: [{ coll: 'products', id: pr.id, after: { ...pr, custo_informado: b.custo_informado === '' ? null : Number(b.custo_informado) } }] }); return analisarProduto(t, getProduct(p.id)); });
 
 // atendimento (Flora)
-on('GET', '/atendimento/conversas', ({ t }) => db().list('conversations', t).sort((a, b) => ((a.updated_at || '') < (b.updated_at || '') ? 1 : -1)).map((c) => ({ ...c, ultima: flora.listMessages(c.id).slice(-1)[0] || null })));
-on('GET', '/atendimento/conversas/:id', ({ t, p }) => { const c = own(db().get('conversations', decodeURIComponent(p.id)), t); return { conversa: c, mensagens: flora.listMessages(c.id), pedidos: listOrders(t, (o) => o.contato === c.contato) }; });
+on('GET', '/atendimento/conversas', ({ t }) => db().list('conversations', t).sort((a, b) => ((a.updated_at || '') < (b.updated_at || '') ? 1 : -1)).map((c) => ({ ...c, ultima: flora.listMessages(t, c.id).slice(-1)[0] || null })));
+on('GET', '/atendimento/conversas/:id', ({ t, p }) => { const c = own(db().get('conversations', decodeURIComponent(p.id)), t); return { conversa: c, mensagens: flora.listMessages(t, c.id), pedidos: listOrders(t, (o) => o.contato === c.contato) }; });
 on('POST', '/atendimento/mensagem', ({ t, b }) => { if (!b?.texto) throw new HttpError(400, 'texto é obrigatório'); return flora.receberMensagem(t, { canal: b.canal || 'chat_loja', contato: b.contato || `visitante_${Date.now()}`, nome: b.nome, texto: b.texto }); });
 on('POST', '/atendimento/conversas/:id/assumir', async ({ t, p, b }) => flora.mensagemFuncionario(t, decodeURIComponent(p.id), b?.texto || 'Oi! Aqui é da equipe da loja, vou continuar seu atendimento.'));
 on('POST', '/atendimento/conversas/:id/devolver', ({ t, p }) => { flora.devolverParaFlora(t, decodeURIComponent(p.id)); return { ok: true }; });
@@ -181,14 +185,56 @@ on('DELETE', '/conteudo/fotos/:id', ({ t, p }) => { mari.removePhoto(t, p.id); r
 on('GET', '/anuncios', ({ t }) => ({ campanhas: caio.listCampaigns(t).map((c) => ({ ...c, produtos: (c.produto_ids || []).map((id) => getProduct(id)?.nome) })), config: getConfig(t, 'caio'), verba_teste: caio.verbaTeste(t), ultima_analise: db().list('reports', t, (r) => r.agent === 'caio').sort((a, b) => (a.created_at < b.created_at ? 1 : -1))[0] || null, mari_contratada: active(t, 'mari') }));
 on('POST', '/anuncios/:id/pausar', ({ t, p }) => { caio.pausarManual(t, p.id); return { ok: true }; });
 
-// eventos vindos da iFlores
+// eventos vindos da iFlores (webhooks). Idempotente: o mesmo event_id é processado uma única vez.
 on('POST', '/eventos', ({ t, b }) => {
-  const { type, data = {} } = b || {};
-  if (type === 'payment.confirmed') return confirmarPagamento(t, data.order_id, 'sistema');
-  if (type === 'order.status') { const o = own(getOrder(data.order_id), t); return db().put('orders', { ...o, status: data.status }); }
-  if (type === 'customer.optout') { flora.optout(t, data.contato); return { ok: true }; }
-  log(t, 'alex', `Evento recebido da iFlores: ${type}`, { type: 'evento', data });
-  return { ok: true };
+  const { id: eventId, type, data = {} } = b || {};
+  if (!type) throw new HttpError(400, 'type é obrigatório');
+  if (eventId) {
+    const k = `${t}:evt:${eventId}`;
+    if (db().get('eventos_recebidos', k)) return { ok: true, duplicado: true };
+    db().put('eventos_recebidos', { id: k, tenant_id: t, type });
+  }
+  switch (type) {
+    case 'payment.confirmed': { const o = data.order_id ? getOrder(data.order_id) : db().list('orders', t, (x) => x.external_id === data.external_id)[0]; return confirmarPagamento(t, own(o, t).id, 'sistema'); }
+    case 'order.created': case 'order.updated': return crm.aplicarPedidoIflores(t, data);
+    case 'order.status': { const o = data.order_id ? getOrder(data.order_id) : db().list('orders', t, (x) => x.external_id === data.external_id)[0]; return mudarStatus(t, own(o, t).id, data.status); }
+    case 'customer.created': case 'customer.updated': return crm.aplicarClienteIflores(t, data);
+    case 'customer.optout': return crm.salvarContato(t, { contato: data.contato || data.telefone, optin_marketing: false }, { origem: 'iflores' });
+    case 'review.created': publish(t, 'avaliacao.recebida', { nota: data.nota, comentario: data.comentario, cliente: data.cliente }); return { ok: true };
+    default: log(t, 'alex', `Evento recebido da iFlores: ${type}`, { type: 'evento' }); return { ok: true, ignorado: true };
+  }
+});
+on('POST', '/pedidos/:id/status', ({ t, p, b }) => mudarStatus(t, own(getOrder(p.id), t).id, b.status));
+
+// CRM
+on('GET', '/crm/contatos', ({ t, q }) => crm.listarContatos(t, { busca: q.busca, etapa: q.etapa, tag: q.tag, optin: q.optin === undefined || q.optin === '' ? undefined : q.optin === 'true' }).slice(0, 300));
+on('GET', '/crm/funil', ({ t }) => ({ etapas: crm.ETAPAS, contagem: crm.funil(t) }));
+on('POST', '/crm/contatos', ({ t, b }) => { if (!b?.contato) throw new HttpError(400, 'Informe o telefone'); return crm.salvarContato(t, b, { origem: 'painel' }); });
+on('GET', '/crm/contatos/:tel', ({ t, p }) => { const r = crm.linhaDoTempo(t, decodeURIComponent(p.tel)); if (!r) throw nf('Contato não encontrado'); return r; });
+on('PATCH', '/crm/contatos/:tel', ({ t, p, b }) => { const tel = decodeURIComponent(p.tel); if (!crm.getContato(t, tel)) throw nf('Contato não encontrado'); const { nome, email, tags, optin_marketing, datas, data_ocasiao, ocasiao } = b; return crm.salvarContato(t, { contato: tel, nome, email, tags, optin_marketing, datas, data_ocasiao, ocasiao }, { origem: 'painel' }); });
+on('POST', '/crm/contatos/:tel/notas', ({ t, p, b }) => crm.adicionarNota(t, decodeURIComponent(p.tel), b.texto));
+on('GET', '/crm/sincronizacao', ({ t }) => ({ ...crm.estadoSync(t), fila: listarOutbox(t).filter((o) => o.status !== 'enviado').slice(0, 50) }));
+on('POST', '/crm/sincronizar', async ({ t }) => { const r = await crm.sincronizar(t).catch((e) => ({ erro: e.message })); return { ...r, estado: crm.estadoSync(t) }; });
+on('POST', '/crm/reenviar-falhas', ({ t }) => { crm.reenviarFalhas(t); return crm.estadoSync(t); });
+
+// automações
+on('GET', '/automacoes', ({ t }) => aut.listarAutomacoes(t));
+on('PUT', '/automacoes/:id', ({ t, p, b }) => aut.salvarAutomacao(t, p.id, b || {}));
+on('GET', '/automacoes/execucoes', ({ t, q }) => aut.listarExecucoes(t, Math.min(300, Number(q.limit) || 100)));
+on('POST', '/automacoes/executar', async ({ t }) => ({ execucoes: (await aut.executarAutomacoes(t)).length }));
+
+// conexão: checklist para o lojista conectar sem ajuda técnica
+on('GET', '/conexao', ({ t }) => {
+  const tn = getTenant(t); const I = tn.integrations || {};
+  const passos = [
+    { id: 'iflores', nome: 'Sistema iFlores', para: 'Todos os agentes (catálogo, pedidos, clientes)', ok: !!tn.iflores?.connected, obrigatorio: true },
+    { id: 'whatsapp', nome: 'WhatsApp Business', para: 'Flora e automações', ok: !!I.whatsapp?.connected, obrigatorio: hired(t, 'flora') },
+    { id: 'instagram', nome: 'Instagram', para: 'Mari', ok: !!I.instagram?.connected, obrigatorio: hired(t, 'mari') },
+    { id: 'meta_ads', nome: 'Meta Ads', para: 'Caio', ok: !!I.meta_ads?.connected, obrigatorio: hired(t, 'caio') },
+    { id: 'google_ads', nome: 'Google Ads', para: 'Caio', ok: !!I.google_ads?.connected, obrigatorio: false },
+  ];
+  const faltando = passos.filter((x) => x.obrigatorio && !x.ok);
+  return { passos, pronto: !faltando.length, proximo: faltando[0]?.id || null, sincronizacao: crm.estadoSync(t), demo: !!tn.demo, loja_id: t };
 });
 
 // integrações
@@ -208,7 +254,9 @@ export async function handle({ method, path, query = {}, body = null, tenantId }
     const match = path.match(re);
     if (match && m === method) {
       try { return { status: 200, body: (await fn({ t: tenantId, p: match.groups || {}, q: query, b: body || {} })) ?? { ok: true } }; }
-      catch (e) { if (e.status) return { status: e.status, body: { error: e.message } }; console.error(e); return { status: 500, body: { error: e.message || 'Erro interno' } }; }
+      catch (e) {
+        if (e.name === 'IsolationError') { console.warn(`[isolamento] ${tenantId} ${method} ${path}: ${e.message}`); return { status: 404, body: { error: 'Não encontrado' } }; }
+        if (e.status) return { status: e.status, body: { error: e.message } }; console.error(e); return { status: 500, body: { error: e.message || 'Erro interno' } }; }
     }
   }
   return { status: 404, body: { error: 'Rota não encontrada' } };

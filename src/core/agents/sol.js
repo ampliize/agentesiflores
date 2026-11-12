@@ -1,6 +1,7 @@
 // SOL — custos, precificação e resultado financeiro. Conversacional: responde perguntas como
 // "Meu buquê custa R$50 para produzir. Por quanto posso vender?" mostrando sempre as premissas.
 import { active } from '../team.js';
+import { serial } from '../store.js';
 import { working } from '../events.js';
 import { listProducts, acharProduto } from '../catalog.js';
 import { precoSugerido, impactoDesconto, analisarProduto, margens, diagnosticoMargem, resumoPeriodo, params } from '../finance.js';
@@ -91,7 +92,8 @@ function interpretar(tenantId, texto, contexto) {
 
 const AJUDA = 'Pode me perguntar, por exemplo:\n• "Meu buquê custa R$50 para produzir. Por quanto posso vender?"\n• "Posso dar 10% de desconto no Buquê Encanto?"\n• "Por que estou vendendo mais e sobrando menos?"\n• "Qual a margem da Cesta Café da Manhã?"\n• "Quais produtos têm margem baixa?"';
 
-export async function conversar(tenantId, texto) {
+export function conversar(tenantId, texto) { return serial(`${tenantId}:chat:sol`, () => conversarAgora(tenantId, texto)); }
+async function conversarAgora(tenantId, texto) {
   if (!active(tenantId, 'sol')) return { texto: 'A Sol não está contratada ou está pausada nesta loja.' };
   const chat = getChat(tenantId, 'sol');
   chat.mensagens.push({ role: 'user', texto, em: now() });

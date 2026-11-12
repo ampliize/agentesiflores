@@ -2,7 +2,7 @@
 // Regras inegociáveis: só informações reais (catálogo, datas, frete); nada de desconto não
 // autorizado; resumo conferido antes de criar o pedido; link enviado ≠ pagamento confirmado;
 // pedido em aberto é reaproveitado (sem duplicar); quando um funcionário assume, a Flora pausa.
-import { db } from '../store.js';
+import { db, serial } from '../store.js';
 import { getConfig, active, getTenant } from '../team.js';
 import { log, working } from '../events.js';
 import { createTask } from '../tasks.js';
@@ -17,7 +17,7 @@ export function getConversa(tenantId, canal, contato, nome) {
   const id = `${tenantId}:${canal}:${contato}`;
   return db().get('conversations', id) || db().put('conversations', { id, tenant_id: tenantId, canal, contato, nome: nome || '', status: 'flora', estado: { etapa: 'inicio', itens: [] }, ultima_cliente_em: null, created_at: now() });
 }
-export const listMessages = (convId) => db().list('messages', null, (m) => m.conversation_id === convId).sort((a, b) => (a.em < b.em ? -1 : 1));
+export const listMessages = (tenantId, convId) => db().list('messages', tenantId, (m) => m.conversation_id === convId).sort((a, b) => (a.em < b.em ? -1 : 1));
 function addMsg(conv, role, texto) { return db().put('messages', { id: uid('msg_'), tenant_id: conv.tenant_id, conversation_id: conv.id, role, texto, em: now() }); }
 const saveConv = (c) => db().put('conversations', c);
 
@@ -116,7 +116,7 @@ function escolher(tenantId, e, texto) {
 async function demoResponder(tenantId, conv, texto) {
   const cfg = getConfig(tenantId, 'flora'); const loja = getTenant(tenantId).name; const s = getSettings(tenantId);
   const e = conv.estado; const t = norm(texto);
-  const primeira = listMessages(conv.id).filter((m) => m.role === 'flora').length === 0;
+  const primeira = listMessages(tenantId, conv.id).filter((m) => m.role === 'flora').length === 0;
   const ola = primeira ? `${cfg.saudacao.replace('{loja}', loja)}\n\n` : '';
 
   if (/(falar com (?:uma )?(?:pessoa|atendente|humano|alguem)|reclama|absurdo|errado|nao chegou|casamento|evento)/.test(t)) {
@@ -272,7 +272,11 @@ function tools(tenantId, conv) {
 
 // ---------------- entrada principal ----------------
 /** Mensagem de cliente (WhatsApp, chat da loja ou simulador). */
-export async function receberMensagem(tenantId, { canal = 'chat_loja', contato, nome, texto }) {
+export function receberMensagem(tenantId, msg) {
+  // mensagens da mesma conversa são processadas em ordem, uma de cada vez
+  return serial(`${tenantId}:conversa:${msg.canal || 'chat_loja'}:${msg.contato}`, () => processar(tenantId, msg));
+}
+async function processar(tenantId, { canal = 'chat_loja', contato, nome, texto }) {
   const conv = getConversa(tenantId, canal, contato, nome);
   addMsg(conv, 'cliente', texto);
   conv.ultima_cliente_em = now(); conv.recuperacao_enviada = false;
@@ -283,7 +287,7 @@ export async function receberMensagem(tenantId, { canal = 'chat_loja', contato, 
   const resposta = await working(tenantId, 'flora', `Atendendo ${nome || contato}`, async () => {
     try {
       if (aiEnabled()) {
-        const hist = listMessages(conv.id).slice(-30).filter((m) => m.role !== 'sistema').map((m) => ({ role: m.role === 'cliente' ? 'user' : 'assistant', content: m.texto }));
+        const hist = listMessages(tenantId, conv.id).slice(-30).filter((m) => m.role !== 'sistema').map((m) => ({ role: m.role === 'cliente' ? 'user' : 'assistant', content: m.texto }));
         const msgs = []; for (const m of hist) { const l = msgs[msgs.length - 1]; if (l && l.role === m.role) l.content += `\n${m.content}`; else msgs.push({ ...m }); }
         while (msgs.length && msgs[0].role !== 'user') msgs.shift();
         const r = await runToolLoop({ system: system(tenantId), messages: msgs, tools: tools(tenantId, conv), effort: 'low' });
@@ -318,37 +322,11 @@ export function devolverParaFlora(tenantId, convId) {
   log(tenantId, 'flora', `Voltou a atender ${conv.nome || conv.contato}`, { type: 'retomada' });
 }
 
-// ---------------- rotinas: recuperação e recompra ----------------
-export async function rotina(tenantId, agora = new Date()) {
-  if (!active(tenantId, 'flora')) return { recuperadas: 0, recompra: 0 };
-  const cfg = getConfig(tenantId, 'flora');
-  let recuperadas = 0; let recompra = 0;
-  if (cfg.recuperar_abandonos) {
-    const limite = new Date(agora - cfg.horas_para_recuperar * 3600e3).toISOString();
-    const janela = new Date(agora - 23 * 3600e3).toISOString(); // janela de 24 h do WhatsApp
-    for (const c of db().list('conversations', tenantId, (x) => x.status === 'flora' && !x.recuperacao_enviada && x.ultima_cliente_em && x.ultima_cliente_em <= limite && x.ultima_cliente_em >= janela)) {
-      const aberto = pedidoEmAberto(tenantId, c.contato);
-      let msg = null;
-      if (aberto) msg = `Oi${c.nome ? `, ${c.nome.split(' ')[0]}` : ''}! Seu pedido #${aberto.numero} ainda está aguardando pagamento. Se quiser finalizar, o link é este: ${aberto.pagamento.link} 🌷`;
-      else if (c.estado?.itens?.length && !c.estado.pedido_id) msg = `Oi${c.nome ? `, ${c.nome.split(' ')[0]}` : ''}! Vi que você estava escolhendo o ${c.estado.itens[0].nome}. Posso te ajudar a finalizar?`;
-      if (!msg) continue;
-      await enviar(tenantId, c, msg);
-      saveConv({ ...c, recuperacao_enviada: true });
-      recuperadas++;
-      log(tenantId, 'flora', `Enviou mensagem de recuperação para ${c.nome || c.contato}`, { type: 'recuperacao', kind: 'acao' });
-    }
-  }
-  if (cfg.recompra?.ativa) {
-    const hoje = localDate(agora); const alvo = addDays(hoje, cfg.recompra.dias_antes);
-    for (const cli of db().list('customers', tenantId, (x) => x.optin_marketing && x.data_ocasiao && x.data_ocasiao.slice(5) === alvo.slice(5) && x.data_ocasiao < hoje && x.recompra_enviada !== hoje.slice(0, 4))) {
-      const conv = getConversa(tenantId, 'whatsapp', cli.contato, cli.nome);
-      await enviar(tenantId, conv, `Oi${cli.nome ? `, ${cli.nome.split(' ')[0]}` : ''}! No ano passado você presenteou com flores no dia ${fmtDia(cli.data_ocasiao)}${cli.ocasiao ? ` (${cli.ocasiao})` : ''}. Quer que eu separe algo especial de novo? 🌷 (Responda SAIR para não receber mais lembretes.)`);
-      db().put('customers', { ...cli, recompra_enviada: hoje.slice(0, 4) });
-      recompra++;
-      log(tenantId, 'flora', `Enviou lembrete de recompra autorizado para ${cli.nome || cli.contato}`, { type: 'recompra', kind: 'acao' });
-    }
-  }
-  return { recuperadas, recompra };
+/** Envia uma mensagem da Flora para um contato (usado pelas automações). */
+export async function enviarParaContato(tenantId, { canal = 'whatsapp', contato, nome, texto }) {
+  const conv = getConversa(tenantId, canal, contato, nome);
+  await enviar(tenantId, conv, texto);
+  return conv;
 }
 
 export function optout(tenantId, contato) {

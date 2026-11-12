@@ -4,6 +4,7 @@
 import { db } from './store.js';
 import { uid, now, norm, localDate, localTime, weekday, contemTermos, tokens, STOP } from './util.js';
 import { publish, log } from './events.js';
+import { enfileirar } from './outbox.js';
 
 // ---------------- leitura ----------------
 export const getProduct = (id) => db().get('products', id);
@@ -135,6 +136,7 @@ export function applyChanges(tenantId, { actor, comando = '', descricao, ops, or
   }
   const change = db().put('changes', { id: uid('chg_'), tenant_id: tenantId, actor, comando, descricao, origem, ops: before.map(({ coll, id, before: b, after }) => ({ coll, id, before: b, after })), revertida: false, created_at: now() });
   log(tenantId, actor, descricao, { type: 'alteracao', kind: 'acao', level: 'success', data: { change_id: change.id } });
+  enfileirar(tenantId, 'alteracao.aplicar', { change_id: change.id, descricao, ops: change.ops.map(({ coll, id, after }) => ({ coll, id, after })) });
   notificarDisponibilidade(tenantId, before, s0);
   return change;
 }

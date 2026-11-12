@@ -5,7 +5,7 @@ import path from 'node:path';
 import express from 'express';
 import { Resvg } from '@resvg/resvg-js';
 import { init, rotinas } from '../core/index.js';
-import { db } from '../core/store.js';
+import { db, comLoja } from '../core/store.js';
 import { handle } from '../core/api.js';
 import { bus } from '../core/events.js';
 import { seedDemo } from '../core/seed.js';
@@ -17,8 +17,10 @@ import { aiEnabled, MODEL } from '../core/llm.js';
 import { createSqliteStore } from './sqlite-store.js';
 import { novaChave, tenantPorChave, assinarSessao, verificarSessao } from './auth.js';
 import { iniciarWebhooks, assinaturaValida } from './webhooks-out.js';
+import { ativarContexto, dentroDoLimite, porLoja } from './contexto.js';
 
 export function createApp({ store } = {}) {
+  ativarContexto();
   init(store || createSqliteStore());
   iniciarWebhooks();
   const app = express();
@@ -59,7 +61,7 @@ export function createApp({ store } = {}) {
   app.post('/api/v1/demo', (req, res) => {
     if (process.env.ALLOW_DEMO === 'false') return res.status(403).json({ error: 'Demonstração desativada' });
     const t = seedDemo();
-    rotinas(t, { forcar: true }).catch(() => {});
+    comLoja(t, () => rotinas(t, { forcar: true })).catch(() => {});
     res.json({ token: assinarSessao(t), panel_url: painel(req, assinarSessao(t)) });
   });
   app.post('/api/v1/chave/nova', (req, res) => { const t = auth(req); if (!t) return res.status(401).json({ error: 'Não autorizado' }); res.json({ api_key: novaChave(t) }); });
@@ -86,13 +88,14 @@ export function createApp({ store } = {}) {
   });
   app.all('/api/v1/*rota', async (req, res) => {
     const t = auth(req); if (!t) return res.status(401).json({ error: 'Não autorizado' });
-    const r = await handle({ method: req.method, path: `/${req.params.rota.join('/')}`, query: req.query, body: req.body, tenantId: t });
+    if (!dentroDoLimite(t)) return res.status(429).json({ error: 'Muitas requisições desta loja. Tente em instantes.' });
+    const r = await comLoja(t, () => handle({ method: req.method, path: `/${req.params.rota.join('/')}`, query: req.query, body: req.body, tenantId: t }));
     res.status(r.status).json(r.body);
   });
 
   // ---------- imagens das peças em PNG (o Instagram não aceita SVG) ----------
   app.get('/media/posts/:id/:n.png', (req, res) => {
-    const p = db().get('posts', req.params.id); const s = p?.slides?.[Number(req.params.n) - 1];
+    const raw = db().get('posts', req.params.id); const s = raw?.slides?.[Number(req.params.n) - 1];
     if (!s?.imagem) return res.sendStatus(404);
     const svg = decodeURIComponent(s.imagem.replace(/^data:image\/svg\+xml;charset=utf-8,/, ''));
     res.type('png').set('cache-control', 'public, max-age=3600').send(new Resvg(svg, { font: { loadSystemFonts: true } }).render().asPng());
@@ -103,7 +106,7 @@ export function createApp({ store } = {}) {
   app.post('/webhooks/whatsapp/:loja', (req, res) => {
     res.sendStatus(200);
     const t = db().get('tenants', req.params.loja); if (!t) return;
-    for (const m of parseIncoming(req.body)) receberMensagem(t.id, { canal: 'whatsapp', contato: m.from, nome: m.name, texto: m.text }).catch((e) => console.error('flora', e));
+    for (const m of parseIncoming(req.body)) comLoja(t.id, () => receberMensagem(t.id, { canal: 'whatsapp', contato: m.from, nome: m.name, texto: m.text })).catch((e) => console.error('flora', e));
   });
 
   app.use('/docs', express.static(path.resolve('docs')));
@@ -113,7 +116,11 @@ export function createApp({ store } = {}) {
 }
 
 export function iniciarAgendador(ms = Number(process.env.SCHEDULER_INTERVAL || 60) * 1000) {
-  const tick = async () => { for (const t of db().list('tenants', null, (x) => x.status === 'active')) await rotinas(t.id).catch(console.error); };
+  const tick = async () => {
+    const ids = db().list('tenants', null, (x) => x.status === 'active').map((t) => t.id);
+    const erros = await porLoja(ids, (id) => comLoja(id, () => rotinas(id)));
+    for (const e of erros) console.error(`[rotinas] loja ${e.id}: ${e.erro}`);
+  };
   return setInterval(tick, ms);
 }
 
