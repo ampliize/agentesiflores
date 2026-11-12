@@ -50,7 +50,7 @@ export function createApp({ store } = {}) {
       integrations: { whatsapp: { connected: false }, meta_ads: { connected: false }, google_ads: { connected: false }, instagram: { connected: false } },
       webhook: { url: '', enabled: false, secret: crypto.randomBytes(16).toString('hex') } });
     const api_key = novaChave(id);
-    res.status(201).json({ loja_id: id, api_key, panel_url: painel(req, assinarSessao(id)) });
+    res.status(201).json({ loja_id: id, api_key, webhook_secret: db().get('tenants', id).webhook.secret, panel_url: painel(req, assinarSessao(id)) });
   });
   app.post('/api/v1/plataforma/lojas/:storeId/sessao', plataforma, (req, res) => {
     const t = db().list('tenants', null, (x) => x.iflores_store_id === req.params.storeId || x.id === req.params.storeId)[0];

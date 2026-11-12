@@ -51,7 +51,7 @@ let _r; function refreshSoon() { clearTimeout(_r); _r = setTimeout(() => { badge
 const tab = () => location.hash.slice(1).split('/')[0] || 'equipe';
 const VIEWS = {};
 function route() { const t = tab(); $$('#tabs a').forEach((a) => a.classList.toggle('active', a.dataset.tab === t)); (VIEWS[t] || VIEWS.equipe)(); badges(); }
-async function badges() { try { const [t, p] = await Promise.all([api('/tarefas?status=aguardando_dono'), api('/conteudo/posts?status=aguardando_aprovacao')]); $('#bTarefas').textContent = t.length || ''; $('#bConteudo').textContent = p.length || ''; } catch { /* ignora */ } }
+async function badges() { try { const [t, p, c] = await Promise.all([api('/tarefas?status=aguardando_dono'), api('/conteudo/posts?status=aguardando_aprovacao'), api('/conexao')]); $('#bTarefas').textContent = t.length || ''; $('#bConteudo').textContent = p.length || ''; $('#bConectar').textContent = c.pronto ? '' : '!'; } catch { /* ignora */ } }
 const view = (html) => { $('#view').innerHTML = html; return $('#view'); };
 
 // ------------------------------------------------------------------ EQUIPE
@@ -328,17 +328,89 @@ VIEWS.configurar = async () => {
   const k = location.hash.split('/')[1] || 'alex';
   const [cfg, eq] = await Promise.all([api(`/agentes/${k}/config`), api('/equipe')]);
   const ag = eq.equipe.find((a) => a.key === k);
-  const t = ME.tenant;
   const v = view(`<div class="row" style="margin-bottom:14px">${Object.keys(AG).map((x) => `<a class="btn ${x === k ? 'primary' : ''}" href="#configurar/${x}">${AG[x].nome}</a>`).join('')}</div>
     <form class="card" id="cf"><div class="sec-head">${av(k)}<div class="grow"><h2>${AG[k].nome} · ${esc(ag.cargo)}</h2><p>${esc(ag.resumo)}</p></div>
       <label class="check"><input type="checkbox" name="hire" ${ag.contratado ? 'checked' : ''}> Contratado</label><label class="check"><input type="checkbox" name="enabled" ${cfg.enabled ? 'checked' : ''}> Ligado</label></div>
       ${FORMS[k].map(([tt, fs]) => `<fieldset><legend>${tt}</legend><div class="fgrid">${fs.map((f) => campo(f, cfg)).join('')}</div></fieldset>`).join('')}
       ${k === 'sol' ? '<p class="small muted">Custos fixos, custos variáveis e rateio ficam em <a href="#financas">Finanças</a>.</p>' : ''}<button class="btn primary">Salvar</button></form>
-    <div class="card" style="margin-top:16px"><h3>Integrações da loja</h3><p class="small muted">${t.demo ? 'Na demonstração, as integrações não conectam de verdade.' : 'Conecte as contas que os agentes vão usar.'}</p>
-      <div class="grid2">${[['iflores', 'Sistema iFlores', [['base_url', 'URL da API'], ['token', 'Token da loja']], t.iflores], ['whatsapp', 'WhatsApp Business (Flora)', [['phone_number_id', 'Phone Number ID'], ['access_token', 'Token de acesso']], t.integrations.whatsapp], ['instagram', 'Instagram (Mari)', [['ig_user_id', 'ID da conta Business'], ['access_token', 'Token de acesso']], t.integrations.instagram], ['meta_ads', 'Meta Ads (Caio)', [['ad_account_id', 'Conta de anúncios'], ['access_token', 'Token (System User)']], t.integrations.meta_ads], ['google_ads', 'Google Ads (Caio)', [['customer_id', 'Customer ID'], ['access_token', 'Token OAuth']], t.integrations.google_ads]]
-        .map(([key, nome, fs, cur]) => `<form class="stack" data-int="${key}" style="border:1px solid var(--line);border-radius:12px;padding:12px"><div class="row"><b class="grow">${nome}</b><span class="chip ${cur?.connected ? 'ok' : ''}">${cur?.connected ? 'conectado' : 'não conectado'}</span></div>${fs.map(([n, l]) => `<label class="f">${l}<input name="${n}" value="${esc(cur?.[n] || '')}"></label>`).join('')}<button class="btn">Conectar</button></form>`).join('')}</div></div>`);
+`);
   $('#cf').onsubmit = async (e) => { e.preventDefault(); const out = { enabled: e.target.enabled.checked }; FORMS[k].forEach(([, fs]) => fs.forEach((f) => ler(f, e.target, out))); await api(`/agentes/${k}/config`, { method: 'PUT', body: out }); if (e.target.hire.checked !== ag.contratado) await post(`/agentes/${k}/contratar`, { contratado: e.target.hire.checked }); toast('Configurações salvas'); };
-  $$('[data-int]', v).forEach((f) => (f.onsubmit = async (e) => { e.preventDefault(); const r = await api(`/integracoes/${f.dataset.int}`, { method: 'PUT', body: Object.fromEntries(new FormData(f)) }); toast(r.ok ? 'Conectado' : r.mensagem); if (r.ok) { ME.tenant = r.tenant; VIEWS.configurar(); } }));
+};
+
+// ------------------------------------------------------------------ CRM
+const ETAPA_COR = { lead: '', negociando: 'info', aguardando_pagamento: 'warn', cliente: 'ok', recorrente: 'ok', inativo: 'bad' };
+let crmFiltro = { etapa: '', busca: '', optin: '' }; let crmSel = null;
+VIEWS.crm = async () => {
+  const qs = new URLSearchParams(Object.entries(crmFiltro).filter(([, v]) => v !== '')).toString();
+  const [f, cs, sync] = await Promise.all([api('/crm/funil'), api(`/crm/contatos${qs ? `?${qs}` : ''}`), api('/crm/sincronizacao')]);
+  const v = view(`<div class="sec-head"><div class="grow"><h2>CRM</h2><p>Todas as pessoas que conversaram ou compraram. A etapa é calculada pelas conversas e pedidos, e tudo é sincronizado com a iFlores.</p></div>
+      <span class="chip ${sync.conectado ? 'ok' : 'warn'}">${sync.conectado ? `iFlores sincronizada ${ago(sync.ultima)}` : `iFlores não conectada · ${sync.fila_pendente} item(ns) na fila`}</span><button class="btn" type="button" id="novoC">Novo contato</button></div>
+    <div class="filters"><button type="button" class="btn sm ${!crmFiltro.etapa ? 'on' : ''}" data-et="">Todos</button>${Object.entries(f.etapas).map(([k, l]) => `<button type="button" class="btn sm ${crmFiltro.etapa === k ? 'on' : ''}" data-et="${k}">${esc(l)} (${f.contagem[k] || 0})</button>`).join('')}</div>
+    <form class="row" id="busca" style="margin-bottom:12px"><input name="b" class="grow" style="width:auto" placeholder="Buscar por nome, telefone, e-mail ou etiqueta" value="${esc(crmFiltro.busca)}"><select name="o" style="width:auto"><option value="">Consentimento: todos</option><option value="true" ${crmFiltro.optin === 'true' ? 'selected' : ''}>Aceitam mensagens</option><option value="false" ${crmFiltro.optin === 'false' ? 'selected' : ''}>Não aceitam</option></select><button class="btn">Filtrar</button></form>
+    <div class="grid2" style="grid-template-columns:minmax(0,1.3fr) minmax(0,1fr)"><div class="card tw"><table><thead><tr><th>Contato</th><th>Etapa</th><th class="num">Gasto total</th><th>Última compra</th><th>Mensagens</th></tr></thead><tbody>${cs.map((c) => `<tr data-tel="${esc(c.contato)}" style="cursor:pointer;${c.contato === crmSel ? 'background:var(--surface-2)' : ''}"><td><b>${esc(c.nome || 'Sem nome')}</b><div class="small muted">${esc(c.contato)}${(c.tags || []).map((x) => ` · ${esc(x)}`).join('')}</div></td><td><span class="chip ${ETAPA_COR[c.etapa] || ''}">${esc(f.etapas[c.etapa] || c.etapa || '—')}</span></td><td class="num">${brl(c.total_gasto || 0)}</td><td>${c.ultima_compra ? dia(c.ultima_compra) + '/' + c.ultima_compra.slice(2, 4) : '—'}</td><td>${c.optin_marketing ? '<span class="chip ok">aceita</span>' : '<span class="chip">não</span>'}</td></tr>`).join('') || '<tr><td colspan="5" class="empty">Nenhum contato.</td></tr>'}</tbody></table></div>
+      <div class="card" id="det">${crmSel ? '' : '<div class="empty">Escolha um contato para ver a linha do tempo.</div>'}</div></div>`);
+  $$('[data-et]', v).forEach((b) => (b.onclick = () => { crmFiltro.etapa = b.dataset.et; VIEWS.crm(); }));
+  $('#busca').onsubmit = (e) => { e.preventDefault(); crmFiltro.busca = e.target.b.value; crmFiltro.optin = e.target.o.value; VIEWS.crm(); };
+  $$('[data-tel]', v).forEach((r) => (r.onclick = () => { crmSel = r.dataset.tel; VIEWS.crm(); }));
+  $('#novoC').onclick = () => modal(`<h3>Novo contato</h3><label class="f">Telefone com DDD<input name="contato" required placeholder="11 98888-7777"></label><label class="f">Nome<input name="nome"></label><label class="check"><input type="checkbox" name="optin"> O cliente autorizou receber mensagens da loja</label><div class="row"><span class="grow"></span><button class="btn" value="x">Cancelar</button><button class="btn primary" value="ok">Salvar</button></div>`,
+    async (val, fm) => { if (val !== 'ok' || !fm.contato.value) return; await post('/crm/contatos', { contato: fm.contato.value, nome: fm.nome.value, optin_marketing: fm.optin.checked }); toast('Contato salvo'); VIEWS.crm(); });
+  if (crmSel) detalheContato(f.etapas);
+};
+async function detalheContato(etapas) {
+  const d = await api(`/crm/contatos/${encodeURIComponent(crmSel)}`); const c = d.contato;
+  const ic = { mensagem: '💬', pedido: '🧾', automacao: '⚙️', nota: '📝' };
+  $('#det').innerHTML = `<div class="row"><h3 class="grow" style="margin:0">${esc(c.nome || c.contato)}</h3><span class="chip ${ETAPA_COR[c.etapa] || ''}">${esc(etapas[c.etapa] || '')}</span></div>
+    <p class="small muted">${esc(c.contato)} · ${c.pedidos_pagos || 0} compra(s) · ${brl(c.total_gasto || 0)}${c.external_id ? ` · iFlores #${esc(c.external_id)}` : ''}</p>
+    <form id="ed" class="stack"><div class="fgrid"><label class="f">Nome<input name="nome" value="${esc(c.nome || '')}"></label><label class="f">E-mail<input name="email" value="${esc(c.email || '')}"></label><label class="f">Etiquetas<input name="tags" value="${esc((c.tags || []).join(', '))}"></label></div>
+      <label class="check"><input type="checkbox" name="optin" ${c.optin_marketing ? 'checked' : ''}> Aceita receber mensagens da loja ${c.optin_em ? `<span class="small muted">(registrado ${dia(c.optin_em.slice(0, 10))} via ${esc(c.optin_origem)})</span>` : ''}</label>
+      <p class="small muted">Só marque com autorização do cliente. Sem isso, as automações de marketing não enviam nada para ele.</p><div class="row"><button class="btn primary">Salvar</button></div></form>
+    <form id="nt" class="row" style="margin-top:10px"><input name="t" class="grow" style="width:auto" placeholder="Adicionar uma nota" required><button class="btn">Anotar</button></form>
+    <h4 style="margin-top:14px">Linha do tempo</h4><div class="feed" style="max-height:420px">${d.eventos.map((e) => `<div class="feed-item"><span class="ic" style="--c:var(--muted)">${ic[e.tipo] || '•'}</span><div><div class="m">${e.tipo === 'mensagem' ? `<b>${e.quem === 'cliente' ? 'Cliente' : e.quem === 'flora' ? 'Flora' : 'Loja'}:</b> ` : ''}${esc((e.texto || '').slice(0, 220))}</div><div class="meta">${dt(e.em)}</div></div></div>`).join('') || '<div class="empty">Sem histórico.</div>'}</div>`;
+  $('#ed').onsubmit = async (e) => { e.preventDefault(); const fm = e.target; await api(`/crm/contatos/${encodeURIComponent(c.contato)}`, { method: 'PATCH', body: { nome: fm.nome.value, email: fm.email.value, tags: fm.tags.value.split(',').map((x) => x.trim()).filter(Boolean), optin_marketing: fm.optin.checked } }); toast('Contato atualizado e enviado à iFlores'); VIEWS.crm(); };
+  $('#nt').onsubmit = async (e) => { e.preventDefault(); await post(`/crm/contatos/${encodeURIComponent(c.contato)}/notas`, { texto: e.target.t.value }); detalheContato(etapas); };
+}
+
+// ------------------------------------------------------------------ AUTOMAÇÕES
+const TIPO_AUT = { transacional: '<span class="chip info">Sobre um pedido ou conversa</span>', marketing: '<span class="chip acc">Marketing · só com autorização</span>', interno: '<span class="chip">Interna da equipe</span>' };
+VIEWS.automacoes = async () => {
+  const [as, ex] = await Promise.all([api('/automacoes'), api('/automacoes/execucoes?limit=60')]);
+  const v = view(`<div class="sec-head"><div class="grow"><h2>Automações</h2><p>Antes de qualquer envio, a equipe confere: não repete mensagem, não fala com quem está com uma pessoa da loja, marketing só com autorização, no máximo 1 por semana e nunca entre 21h e 8h.</p></div><button class="btn primary" id="runA" type="button">Rodar agora</button></div>
+    <div class="grid2">${as.map((a) => `<form class="card stack" data-aut="${a.id}" style="border-top:4px solid ${cor(a.agente)}"><div class="row">${av(a.agente)}<div class="grow"><b>${esc(a.nome)}</b><div class="small muted">${esc(a.gatilho)}</div></div><label class="check"><input type="checkbox" name="ativo" ${a.ativo ? 'checked' : ''}> Ligada</label></div>
+      <div class="row">${TIPO_AUT[a.tipo] || ''}${a.agente_ativo ? '' : `<span class="chip warn">${esc(AG[a.agente].nome)} não contratado(a)</span>`}</div><p class="small" style="margin:0">${esc(a.descricao)}</p>
+      ${Object.keys(a.params).length ? `<div class="fgrid">${Object.entries(a.params).map(([k, val]) => `<label class="f">${esc(k.replace(/_/g, ' '))}<input type="number" name="p_${k}" value="${esc(val)}"></label>`).join('')}</div>` : ''}
+      ${a.mensagem ? `<label class="f">Mensagem<textarea name="msg">${esc(a.mensagem)}</textarea><small>Variáveis: {primeiro_nome} {pedido} {link} {produto} {data} {loja}. Trechos como "{, primeiro_nome}" somem quando não há nome.</small></label>` : ''}
+      <div class="row"><span class="small muted grow">Enviadas em 30 dias: <b>${a.stats.enviadas_30d}</b> · puladas: ${a.stats.puladas_30d}${a.stats.ultima ? ` · última ${ago(a.stats.ultima)}` : ''}</span><button class="btn sm">Salvar</button></div></form>`).join('')}</div>
+    <div class="card tw" style="margin-top:16px"><h3>Histórico de execuções</h3><table><thead><tr><th>Quando</th><th>Automação</th><th>Contato</th><th>Resultado</th></tr></thead><tbody>${ex.map((e) => `<tr><td class="small">${dt(e.created_at)}</td><td>${esc(e.nome)}</td><td class="small">${esc(e.contato || '—')}</td><td>${e.status === 'enviado' ? `<span class="chip ok">enviada</span> <span class="small muted">${esc((e.texto || '').slice(0, 90))}</span>` : `<span class="chip warn">não enviada</span> <span class="small">${esc(e.motivo)}</span>`}</td></tr>`).join('') || '<tr><td colspan="4" class="empty">Nada executado ainda.</td></tr>'}</tbody></table></div>`);
+  $('#runA').onclick = (e) => busy(e.currentTarget, async () => { const r = await post('/automacoes/executar'); toast(`${r.execucoes} execução(ões)`); VIEWS.automacoes(); });
+  $$('[data-aut]', v).forEach((f) => (f.onsubmit = async (e) => {
+    e.preventDefault(); const params = Object.fromEntries($$('[name^="p_"]', f).map((i) => [i.name.slice(2), Number(i.value)]));
+    await api(`/automacoes/${f.dataset.aut}`, { method: 'PUT', body: { ativo: f.ativo.checked, params, ...(f.msg ? { mensagem: f.msg.value } : {}) } }); toast('Automação salva'); VIEWS.automacoes();
+  }));
+};
+
+// ------------------------------------------------------------------ CONECTAR
+const COMO = {
+  iflores: { campos: [['base_url', 'Endereço da API', 'https://api.iflores.app.br/lojas/SEU_ID'], ['token', 'Token da loja', 'cole aqui']], passos: ['Na iFlores, abra Configurações → Integrações → API.', 'Clique em "Gerar token para a Equipe dos Sonhos".', 'Copie o endereço e o token e cole aqui.'], auto: 'Quando a Equipe é contratada pela própria iFlores, este passo já vem conectado.' },
+  whatsapp: { campos: [['phone_number_id', 'Phone Number ID', ''], ['access_token', 'Token de acesso permanente', '']], passos: ['Entre em business.facebook.com com a conta da loja.', 'Em WhatsApp Manager → API, copie o "Phone Number ID".', 'Gere um token permanente de usuário do sistema com a permissão whatsapp_business_messaging.', 'No app da Meta, configure o webhook com o endereço mostrado abaixo.'] },
+  instagram: { campos: [['ig_user_id', 'ID da conta comercial', ''], ['access_token', 'Token de acesso', '']], passos: ['A conta do Instagram precisa ser Comercial e estar ligada à página da loja no Facebook.', 'No Gerenciador de Negócios, gere um token com instagram_basic e instagram_content_publish.', 'Cole o ID da conta e o token.'] },
+  meta_ads: { campos: [['ad_account_id', 'Conta de anúncios', 'act_123456789'], ['access_token', 'Token de usuário do sistema', '']], passos: ['No Gerenciador de Negócios, abra Usuários do sistema e dê acesso à conta de anúncios.', 'Gere o token com a permissão ads_management.', 'Defina o teto de gasto do Caio em Configurar → Caio antes de liberar.'] },
+  google_ads: { campos: [['customer_id', 'ID do cliente (123-456-7890)', ''], ['access_token', 'Token de acesso', '']], passos: ['Em ads.google.com, copie o ID da conta no canto superior.', 'Autorize o acesso da Equipe dos Sonhos com a conta administradora.', 'Opcional: só é necessário para campanhas no Google.'] },
+};
+VIEWS.conectar = async () => {
+  const c = await api('/conexao');
+  const feitos = c.passos.filter((p) => p.ok).length;
+  const base = location.origin.startsWith('http') ? location.origin : 'https://equipe.iflores.app.br';
+  const v = view(`<div class="sec-head"><div class="grow"><h2>Conectar a loja</h2><p>${c.pronto ? 'Tudo o que a sua equipe precisa está conectado.' : `Faltam ${c.passos.filter((p) => p.obrigatorio && !p.ok).length} conexão(ões) para os agentes contratados trabalharem com dados reais.`}</p></div><span class="chip ${c.pronto ? 'ok' : 'warn'}">${feitos} de ${c.passos.length} conectados</span></div>
+    ${c.demo ? '<div class="card" style="margin-bottom:14px"><b>Loja de demonstração.</b> Aqui as conexões não são feitas de verdade; na loja instalada, cada botão valida o acesso na hora.</div>' : ''}
+    <div class="stack">${c.passos.map((p, i) => { const h = COMO[p.id]; return `<form class="card" data-int="${p.id}"><div class="row"><span class="av" style="--c:${p.ok ? 'var(--ok)' : 'var(--muted)'}">${p.ok ? '✓' : i + 1}</span><div class="grow"><b>${esc(p.nome)}</b><div class="small muted">Para: ${esc(p.para)}${p.obrigatorio ? '' : ' · opcional'}</div></div><span class="chip ${p.ok ? 'ok' : p.obrigatorio ? 'warn' : ''}">${p.ok ? 'conectado' : p.obrigatorio ? 'pendente' : 'opcional'}</span></div>
+      ${p.ok ? '' : `<div class="grid2" style="margin-top:10px"><ol class="small" style="margin:0;padding-left:18px">${h.passos.map((x) => `<li>${esc(x)}</li>`).join('')}</ol><div class="stack">${h.campos.map(([n, l, ph]) => `<label class="f">${l}<input name="${n}" placeholder="${esc(ph)}"></label>`).join('')}<button class="btn primary">Conectar e testar</button></div></div>${h.auto ? `<p class="small muted">${esc(h.auto)}</p>` : ''}${p.id === 'whatsapp' ? `<p class="small">Webhook no app da Meta: <code>${esc(base)}/webhooks/whatsapp/${esc(c.loja_id)}</code></p>` : ''}`}</form>`; }).join('')}</div>
+    <div class="card" style="margin-top:16px"><div class="row"><h3 class="grow" style="margin:0">Sincronização com a iFlores</h3><button class="btn sm" type="button" id="sync">Sincronizar agora</button>${c.sincronizacao.fila_falhou ? '<button class="btn sm" type="button" id="reenv">Reenviar falhas</button>' : ''}</div>
+      <p>Última sincronização: <b>${c.sincronizacao.ultima ? dt(c.sincronizacao.ultima) : 'ainda não'}</b>${c.sincronizacao.resultado ? ` · ${esc(c.sincronizacao.resultado)}` : ''}</p>
+      <p class="small">Itens aguardando envio: <b>${c.sincronizacao.fila_pendente}</b> · com falha: <b>${c.sincronizacao.fila_falhou}</b>. Nada se perde: se a iFlores estiver fora do ar, a equipe tenta de novo automaticamente.</p></div>
+    <div class="card" style="margin-top:16px"><h3>Para o time técnico</h3><p class="small">O passo a passo completo está na documentação do projeto: <b>docs/COMECE-AQUI.md</b> (lojista), <b>docs/INTEGRACAO-IFLORES.md</b> (iFlores) e <b>docs/ISOLAMENTO.md</b> (regras entre lojas).</p></div>`);
+  $$('[data-int]', v).forEach((f) => (f.onsubmit = (e) => { e.preventDefault(); busy($('button.primary', f), async () => { const r = await api(`/integracoes/${f.dataset.int}`, { method: 'PUT', body: Object.fromEntries(new FormData(f)) }); toast(r.ok ? 'Conectado' : r.mensagem); if (r.ok) VIEWS.conectar(); }); }));
+  $('#sync').onclick = (e) => busy(e.currentTarget, async () => { await post('/crm/sincronizar'); toast('Sincronização concluída'); VIEWS.conectar(); });
+  $('#reenv') && ($('#reenv').onclick = async () => { await post('/crm/reenviar-falhas'); VIEWS.conectar(); });
 };
 
 boot();

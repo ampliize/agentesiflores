@@ -1,77 +1,63 @@
-# 🌷 iFlores · Equipe Virtual (MVP)
+# 🌷 Equipe dos Sonhos iFlores
 
-Quatro agentes de IA para floriculturas que já usam a [iFlores](https://www.iflores.app.br/), com um painel
-de configuração e monitoramento que fica **dentro da iFlores** (iframe) e uma **API aberta** para a integração.
+Cinco profissionais virtuais para a floricultura, dentro da iFlores:
 
-| Agente | O que faz |
-|---|---|
-| 👩‍💼 **Gerente** | Mede as metas definidas pelo dono, revisa cada arte antes de publicar (reprova e pede ajuste), audita conversas do WhatsApp, cobra os outros agentes criando tarefas e envia relatório diário pelo WhatsApp. |
-| 📈 **Gestor de Tráfego** | Lê as métricas do Meta Ads, **pausa** campanhas que não performam (regras do dono), **escala** as que vendem, cria campanhas para datas comemorativas e pede criativos à Social Media. |
-| 🎨 **Social Media** | Planeja a semana (posts de feed, stories e criativos de anúncio nas quantidades definidas), gera as **artes em PNG** com as cores da marca, escreve as legendas e **publica automaticamente** no Instagram. |
-| 💬 **Atendente** | Atende no WhatsApp, consulta o catálogo, calcula o frete, **fecha o pedido** na iFlores com link de pagamento, faz upsell e transfere para um humano quando necessário. |
+| Agente | Área | Faz |
+|---|---|---|
+| **Alex** | Gestão | Executa alterações na loja por conversa (com histórico e desfazer), resumo diário, relatório semanal, recomendações com hipótese e revisão, sugestão de compras de flores |
+| **Flora** | Atendimento e vendas | WhatsApp e chat da loja 24 h: recomenda, calcula frete, mostra o resumo, cria o pedido e envia o link de pagamento |
+| **Mari** | Conteúdo | Posts, carrosséis e stories a partir das fotos reais da loja, com aprovação individual, em lote ou automática |
+| **Caio** | Anúncios | Meta e Google dentro do teto do lojista; pausa o que não vende e anúncios de produto esgotado |
+| **Sol** | Finanças | CMV, margem de contribuição, rateio, preço sugerido e efeito de descontos, sempre com as premissas |
 
-## Rodar localmente
+Junto com eles: **CRM** sincronizado com a iFlores, **automações** (pagamento, entrega, pós-venda, datas especiais,
+insumos), **painel** embutível e **API aberta**.
+
+> **Regra do produto:** nenhuma loja vê ou recebe dados de outra. Garantido no código e testado com 1000 lojas
+> simultâneas. Veja [docs/ISOLAMENTO.md](docs/ISOLAMENTO.md).
+
+## Documentação
+
+- [docs/COMECE-AQUI.md](docs/COMECE-AQUI.md): passo a passo para o lojista conectar em 15 minutos
+- [docs/INTEGRACAO-IFLORES.md](docs/INTEGRACAO-IFLORES.md): guia técnico para o time da iFlores
+- [docs/ISOLAMENTO.md](docs/ISOLAMENTO.md): regras e garantias entre lojas
+
+## Rodar
 
 ```bash
 npm install
 ```
 
 ```bash
-cp .env.example .env
-```
-
-```bash
 npm start
 ```
 
-Abra http://localhost:3000 e clique em **Abrir loja de demonstração**.
-
-Sem `ANTHROPIC_API_KEY`, tudo funciona em **modo demonstração**: os agentes usam regras e modelos prontos,
-com catálogo e campanhas de exemplo. Com a chave, os agentes passam a usar o Claude (`AI_MODEL`, padrão `claude-opus-5-5`).
-
-Testes:
+Abra http://localhost:3000 e clique em **Abrir loja de demonstração**. Sem `ANTHROPIC_API_KEY`, os agentes usam
+regras de demonstração; com a chave, usam o Claude.
 
 ```bash
 npm test
 ```
 
-## Painel (abas)
-
-* **Equipe**: organograma com o Gerente acima dos 3 agentes, status ao vivo (online/trabalhando/pausado), o que cada um está fazendo, nota de desempenho, ações em 24 h, metas no topo, feed de atividade em tempo real (SSE) e o último relatório do Gerente.
-* **Tarefas**: kanban. O dono delega tarefas; o Gerente e os agentes também criam tarefas entre si. A coluna "Aguardando você" traz as ações que pedem aprovação.
-* **Conteúdo**: as artes geradas, com aprovar, pedir ajuste (a IA refaz), publicar agora e baixar.
-* **Atendimento**: conversas do WhatsApp, simulador para testar a Atendente e o botão para um humano assumir.
-* **Tráfego**: campanhas com ROAS/CPA/CTR, diagnóstico, ações automáticas e campanhas propostas.
-* **Metas**: as metas e a rotina do Gerente.
-* **Configurar**: personalização completa de cada agente (quantidade de posts, horários, cores, tom, horário de atendimento, upsell, desconto máximo, FAQ, verba, regras de corte, autonomia…).
-* **Integrações**: conexão em 4 passos (iFlores, WhatsApp, Meta Ads, Instagram), chave da API e webhook.
-
-## Integração com a iFlores
-
-Veja [docs/INTEGRACAO-IFLORES.md](docs/INTEGRACAO-IFLORES.md) (fluxo completo e contrato da API que a iFlores
-precisa expor) e [docs/openapi.yaml](docs/openapi.yaml) (API aberta).
-
-## Arquitetura
-
-```
-src/
-  server.js            Express: API, webhooks, mídia, painel
-  scheduler.js         ciclos automáticos por loja (plano semanal, análise de tráfego, supervisão, relatório, publicação)
-  agents/              gerente.js · trafego.js · social.js · atendente.js · defaults.js (config padrão)
-  integrations/        iflores.js · whatsapp.js · meta.js (Ads + Instagram)
-  lib/                 llm.js (Claude) · art.js (gerador de artes) · tenants.js · tasks.js · events.js · calendar.js
-  routes/              api.js (API aberta v1) · webhooks.js (WhatsApp)
-public/                painel (HTML/CSS/JS, sem build)
+```bash
+npm run build:demo
 ```
 
-* Multi-loja (tenant) com SQLite nativo do Node 22 (`DB_PATH`). Para produção com muitas lojas, trocar por Postgres.
-* As decisões de corte do tráfego são **regras determinísticas** (auditáveis); a IA cuida da estratégia, das peças e do atendimento.
-* Saídas da IA com JSON Schema estruturado; a Atendente usa ferramentas (tool use) com schema estrito.
+O último comando gera `dist/painel-demo.html`, o painel completo rodando no navegador com o mesmo núcleo.
 
-## Próximos passos sugeridos
+## Estrutura
 
-1. Implementar na iFlores as rotas da seção 3 do guia de integração e trocar o catálogo de demonstração pelos dados reais.
-2. Fluxo de OAuth da Meta (Embedded Signup do WhatsApp e login do Facebook) para conectar com um clique, sem colar tokens.
-3. Fila de jobs (BullMQ/Redis) e Postgres para escalar; observabilidade dos custos de IA por loja.
-4. Geração de imagem por IA a partir das fotos reais dos produtos (hoje as artes são layouts de marca gerados em SVG/PNG).
-5. Upload de criativos e criação de anúncios completos (conjuntos e anúncios), além de campanhas.
+```
+src/core/          núcleo (roda no servidor e na demo)
+  store.js           armazenamento com isolamento obrigatório por loja
+  agents/            alex, flora, mari, caio, sol
+  crm.js             contatos, funil, linha do tempo, sincronização com a iFlores
+  automacoes.js      automações com deduplicação, consentimento e horário de silêncio
+  outbox.js          fila de envio para a iFlores com novas tentativas
+  catalog.js         base compartilhada (produtos, insumos, entregas, fretes) com histórico e desfazer
+  finance.js         motor financeiro da Sol
+  api.js             API v1 (independente de framework)
+src/server/        Express, SQLite, autenticação, contexto por loja, webhooks
+public/            painel
+test/              testes, incluindo isolamento com 1000 lojas
+```

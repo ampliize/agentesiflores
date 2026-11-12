@@ -237,6 +237,9 @@ on('GET', '/conexao', ({ t }) => {
   return { passos, pronto: !faltando.length, proximo: faltando[0]?.id || null, sincronizacao: crm.estadoSync(t), demo: !!tn.demo, loja_id: t };
 });
 
+// webhook de saída (o sistema da loja recebe o que os agentes fizeram)
+on('PUT', '/webhook', ({ t, b }) => { const tn = getTenant(t); db().put('tenants', { ...tn, webhook: { ...tn.webhook, ...(b.url !== undefined ? { url: String(b.url) } : {}), ...(b.enabled !== undefined ? { enabled: !!b.enabled } : {}) } }); return publicTenant(getTenant(t)).webhook; });
+
 // integrações
 on('PUT', '/integracoes/:nome', ({ t, p, b }) => {
   const tn = getTenant(t); const nome = p.nome;

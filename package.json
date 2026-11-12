@@ -1,7 +1,7 @@
 {
   "name": "iflores-equipe-dos-sonhos",
   "version": "0.2.0",
-  "description": "Equipe dos Sonhos iFlores: 5 agentes (Alex, Flora, Mari, Caio e Sol), painel embutível e API aberta",
+  "description": "Equipe dos Sonhos iFlores: 5 agentes, CRM, automações, painel embutível e API aberta com isolamento entre lojas",
   "type": "module",
   "main": "src/server/index.js",
   "engines": {
