@@ -1,33 +1,19 @@
-// Gera dist/painel-demo.html: o painel completo rodando 100% no navegador, com backend simulado.
+// Gera dist/painel-demo.html: painel + núcleo dos agentes num único arquivo (sem servidor).
 // Uso: node scripts/build-demo.mjs
 import fs from 'node:fs';
-const read = (p) => fs.readFileSync(new URL(`../${p}`, import.meta.url), 'utf8');
+import path from 'node:path';
+import { build } from 'esbuild';
 
-const css = read('public/styles.css');
-const art = read('src/lib/art-svg.js').replace(/^export /m, '');
-const backend = read('demo/backend.js');
-let app = read('public/app.js')
-  .replace(/let TOKEN = .*\n/, "let TOKEN = 'demo-token';\n")
-  .replace("if (!confirm('A chave antiga deixará de funcionar. Continuar?')) return; ", '')
-  .replace(/\s*<a class="btn sm ghost" href="\$\{esc\(p\.image_url\)\}" download>Baixar<\/a>/, '')
-  .replace(/\nboot\(\);\s*$/, '\nwindow.__demoSeed().then(boot);\n');
-const body = read('public/index.html').match(/<body>([\s\S]*)<\/body>/)[1].replace(/<script[^>]*><\/script>/, '');
-if (!app.includes('__demoSeed')) throw new Error('patch do app.js falhou');
-
-const html = `<title>iFlores Equipe Virtual</title>
-<meta name="claude:viewport-fit-sides" content="cover">
-<style>
-${css}
-</style>
-${body}
-<script>
-${art}
-${backend}
-</script>
-<script type="module">
-${app}
-</script>
-`;
-fs.mkdirSync(new URL('../dist', import.meta.url), { recursive: true });
-fs.writeFileSync(new URL('../dist/painel-demo.html', import.meta.url), html);
-console.log('dist/painel-demo.html', (html.length / 1024).toFixed(0), 'KB');
+const root = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
+const stub = {
+  name: 'llm-stub',
+  setup(b) { b.onResolve({ filter: /\/llm\.js$/ }, () => ({ path: path.join(root, 'src/core/llm-stub.js') })); },
+};
+const out = await build({ entryPoints: [path.join(root, 'demo/main.js')], bundle: true, format: 'iife', platform: 'browser', target: 'es2022', write: false, minify: true, plugins: [stub], legalComments: 'none' });
+const js = out.outputFiles[0].text.replace(/<\/script/gi, '<\\/script');
+const css = fs.readFileSync(path.join(root, 'public/styles.css'), 'utf8');
+const body = fs.readFileSync(path.join(root, 'public/index.html'), 'utf8').match(/<body>([\s\S]*)<\/body>/)[1].replace(/<script[^>]*><\/script>/, '');
+const html = `<title>Equipe dos Sonhos iFlores</title>\n<meta name="claude:viewport-fit-sides" content="cover">\n<style>\n${css}\n</style>\n${body}\n<script>\n${js}\n</script>\n`;
+fs.mkdirSync(path.join(root, 'dist'), { recursive: true });
+fs.writeFileSync(path.join(root, 'dist/painel-demo.html'), html);
+console.log(`dist/painel-demo.html ${(html.length / 1024).toFixed(0)} KB`);

@@ -1,18 +1,24 @@
 {
-  "name": "iflores-equipe-virtual",
-  "version": "0.1.0",
-  "description": "Equipe Virtual iFlores: 4 agentes de IA (Gerente, Tráfego, Social Media, Atendente) + painel de integração + API aberta",
+  "name": "iflores-equipe-dos-sonhos",
+  "version": "0.2.0",
+  "description": "Equipe dos Sonhos iFlores: 5 agentes (Alex, Flora, Mari, Caio e Sol), painel embutível e API aberta",
   "type": "module",
-  "main": "src/server.js",
-  "engines": { "node": ">=22.5" },
+  "main": "src/server/index.js",
+  "engines": {
+    "node": ">=22.5"
+  },
   "scripts": {
-    "start": "node --no-warnings src/server.js",
-    "dev": "node --no-warnings --watch src/server.js",
-    "test": "node --no-warnings --test test/*.test.js"
+    "start": "node --no-warnings src/server/index.js",
+    "dev": "node --no-warnings --watch src/server/index.js",
+    "test": "node --no-warnings --test test/*.test.js",
+    "build:demo": "node scripts/build-demo.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^1.5.0",
     "@resvg/resvg-js": "^2.6.2",
     "express": "^5.1.0"
+  },
+  "devDependencies": {
+    "esbuild": "^0.24.2"
   }
 }
