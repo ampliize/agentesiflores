@@ -42,7 +42,7 @@ export function seedDemo(nome = 'Floricultura Jardim Encantado') {
   const tenantId = `loja_demo_${uid().slice(0, 6)}`;
   const t = tenantId; const hoje = localDate(); const r = rnd(42);
   db().put('tenants', { id: t, tenant_id: t, name: nome, iflores_store_id: null, demo: true, status: 'active',
-    plano: { agentes: Object.fromEntries(AGENT_KEYS.map((k) => [k, true])), modelo: 'combo_validacao' },
+    plano: { agentes: Object.fromEntries(AGENT_KEYS.map((k) => [k, k !== 'flora'])), modelo: 'combo_validacao' },
     iflores: { base_url: '', token: '', connected: false },
     integrations: { whatsapp: { connected: false }, meta_ads: { connected: false }, google_ads: { connected: false }, instagram: { connected: false } },
     webhook: { url: '', enabled: false } });

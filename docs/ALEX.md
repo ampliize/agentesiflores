@@ -44,3 +44,16 @@ sazonalidade, anúncios e clima também mudam as vendas.
 - Visitas por página e por produto (`/v1/analytics/diario`). Sem isso, o Alex não sabe de onde vêm os visitantes
   nem o efeito dos destaques da página inicial. As recomendações mostram essa limitação.
 - Estoque real, para a venda perdida por indisponibilidade ser exata.
+
+## Testes
+
+- `npm test`: regras, decomposição, aprovação, acompanhamento, isolamento e a integração com a OpenAI contra um servidor simulado.
+- `npm run eval:alex`: sete cenários com o modelo real. Precisa de:
+
+```bash
+LLM_PROVIDER=openai OPENAI_API_KEY=<sua chave> OPENAI_MODEL=<nome do modelo> npm run eval:alex
+```
+
+Os cenários verificam: se o Alex consulta os números antes de responder, se executa só quando o dono pede,
+se não promete resultado e se não inventa dados de outra loja. Os resultados completos ficam em `eval/alex/resultados/`
+(ignorado pelo git, porque contém as respostas do modelo).

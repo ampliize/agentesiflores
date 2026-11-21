@@ -225,9 +225,9 @@ Regras:
 Hoje é ${localDate()}. Permissões: ${JSON.stringify(getConfig(tenantId, 'alex').permissoes)}. ${getConfig(tenantId, 'alex').instrucoes || ''}`;
 
 function llmTools(tenantId, comando) {
-  const typeOf = (t) => (t.startsWith('number') ? ['number', 'null'] : t.startsWith('boolean') ? ['boolean', 'null'] : ['string', 'null']);
+  const typeOf = (t) => (t.includes('[]') ? ['array', 'null'] : t.startsWith('number') ? ['number', 'null'] : t.startsWith('boolean') ? ['boolean', 'null'] : ['string', 'null']);
   const tools = Object.entries(ACTIONS).map(([name, a]) => {
-    const props = Object.fromEntries(Object.entries({ ...a.params, ...(name === 'desativar_por_item' ? { confirmado: 'boolean' } : {}) }).map(([k, t]) => [k, { type: typeOf(t), ...(t.startsWith('date') ? { description: 'YYYY-MM-DD' } : {}) }]));
+    const props = Object.fromEntries(Object.entries({ ...a.params, ...(name === 'desativar_por_item' ? { confirmado: 'boolean' } : {}) }).map(([k, t]) => [k, { type: typeOf(t), ...(t.includes('[]') ? { items: { type: 'string' } } : {}), ...(t.startsWith('date') ? { description: 'YYYY-MM-DD' } : {}) }]));
     return { name, description: a.descricao, input_schema: { type: 'object', additionalProperties: false, required: Object.keys(props), properties: props },
       run: (input) => { const clean = Object.fromEntries(Object.entries(input).filter(([, v]) => v != null)); return executar(tenantId, name, clean, { comando, confirmado: !!input.confirmado }); } };
   });
@@ -247,15 +247,15 @@ function llmTools(tenantId, comando) {
   return tools;
 }
 
-export function conversar(tenantId, texto) { return serial(`${tenantId}:chat:alex`, () => conversarAgora(tenantId, texto)); }
-async function conversarAgora(tenantId, texto) {
+export function conversar(tenantId, texto, opts = {}) { return serial(`${tenantId}:chat:alex`, () => conversarAgora(tenantId, texto, opts)); }
+async function conversarAgora(tenantId, texto, opts = {}) {
   if (!active(tenantId, 'alex')) return { texto: 'O Alex não está contratado ou está pausado nesta loja.' };
   const chat = getChat(tenantId);
   chat.mensagens.push({ role: 'user', texto, em: now() });
   const resposta = await working(tenantId, 'alex', 'Atendendo um pedido do dono', async () => {
     if (aiEnabled()) {
       const history = chat.mensagens.slice(-16).map((m) => ({ role: m.role === 'user' ? 'user' : 'assistant', content: m.texto }));
-      const r = await runToolLoop({ system: LLM_SYSTEM(tenantId), messages: history, tools: llmTools(tenantId, texto), effort: 'medium' });
+      const r = await runToolLoop({ system: LLM_SYSTEM(tenantId), messages: history, tools: llmTools(tenantId, texto), effort: 'medium', trace: opts.trace });
       return { texto: r.text || 'Não consegui concluir. Pode reformular?' };
     }
     const it = interpretar(tenantId, texto, chat.pendente);

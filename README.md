@@ -5,7 +5,7 @@ Cinco profissionais virtuais para a floricultura, dentro da iFlores:
 | Agente | Área | Faz |
 |---|---|---|
 | **Alex** | Gestão | Executa alterações na loja por conversa (com histórico e desfazer), resumo diário, relatório semanal, recomendações com hipótese e revisão, sugestão de compras de flores |
-| **Flora** | Atendimento e vendas | WhatsApp e chat da loja 24 h: recomenda, calcula frete, mostra o resumo, cria o pedido e envia o link de pagamento |
+| ~~**Flora**~~ *(fora do plano atual: o iFlores já tem agente de atendimento)* | Atendimento e vendas | WhatsApp e chat da loja 24 h: recomenda, calcula frete, mostra o resumo, cria o pedido e envia o link de pagamento |
 | **Mari** | Conteúdo | Posts, carrosséis e stories a partir das fotos reais da loja, com aprovação individual, em lote ou automática |
 | **Caio** | Anúncios | Meta e Google dentro do teto do lojista; pausa o que não vende e anúncios de produto esgotado |
 | **Sol** | Finanças | CMV, margem de contribuição, rateio, preço sugerido e efeito de descontos, sempre com as premissas |

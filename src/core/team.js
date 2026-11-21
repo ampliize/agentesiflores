@@ -15,6 +15,8 @@ export const AGENTS = {
     resumo: 'Mostra quanto cada venda deixa, simula preços e avalia descontos.' },
 };
 export const AGENT_KEYS = Object.keys(AGENTS);
+// Plano atual da oferta. A Flora fica fora (o iFlores já tem um agente de atendimento). O código dela permanece para uso futuro.
+export const PLANO_PADRAO = AGENT_KEYS.filter((k) => k !== 'flora');
 
 export const DEFAULTS = {
   alex: {

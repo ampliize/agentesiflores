@@ -9,7 +9,7 @@ import { db, comLoja } from '../core/store.js';
 import { handle } from '../core/api.js';
 import { bus } from '../core/events.js';
 import { seedDemo } from '../core/seed.js';
-import { AGENT_KEYS } from '../core/team.js';
+import { AGENT_KEYS, PLANO_PADRAO } from '../core/team.js';
 import { renderSlideSvg } from '../core/art.js';
 import { receberMensagem } from '../core/agents/flora.js';
 import { parseIncoming } from '../core/integrations/whatsapp.js';
@@ -40,7 +40,7 @@ export function createApp({ store } = {}) {
   // ---------- plataforma iFlores ----------
   const plataforma = (req, res, next) => (process.env.IFLORES_PLATFORM_KEY && req.get('x-platform-key') === process.env.IFLORES_PLATFORM_KEY ? next() : res.status(401).json({ error: 'X-Platform-Key inválida' }));
   app.post('/api/v1/plataforma/lojas', plataforma, (req, res) => {
-    const { nome, iflores_store_id, iflores = {}, agentes = AGENT_KEYS } = req.body || {};
+    const { nome, iflores_store_id, iflores = {}, agentes = PLANO_PADRAO } = req.body || {};
     if (!nome) return res.status(400).json({ error: 'nome é obrigatório' });
     if (iflores_store_id && db().list('tenants', null, (t) => t.iflores_store_id === iflores_store_id).length) return res.status(409).json({ error: 'Loja já cadastrada' });
     const id = `loja_${crypto.randomBytes(8).toString('hex')}`;

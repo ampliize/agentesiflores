@@ -3,3 +3,6 @@ data/*.db*
 data/media/
 .env
 dist/
+
+# avaliações com modelo real (saída com texto de respostas)
+eval/alex/resultados/

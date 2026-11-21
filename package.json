@@ -11,12 +11,14 @@
     "start": "node --no-warnings src/server/index.js",
     "dev": "node --no-warnings --watch src/server/index.js",
     "test": "node --no-warnings --test test/*.test.js",
-    "build:demo": "node scripts/build-demo.mjs"
+    "build:demo": "node scripts/build-demo.mjs",
+    "eval:alex": "node --no-warnings eval/alex/rodar.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^1.5.0",
     "@resvg/resvg-js": "^2.6.2",
-    "express": "^5.1.0"
+    "express": "^5.1.0",
+    "openai": "6.49.0"
   },
   "devDependencies": {
     "esbuild": "^0.24.2"

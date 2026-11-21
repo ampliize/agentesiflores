@@ -18,7 +18,7 @@ const alex = (texto) => call('POST', '/agentes/alex/conversar', { texto });
 const sol = (texto) => call('POST', '/agentes/sol/conversar', { texto });
 const cliente = (texto, contato = '5511911112222') => call('POST', '/atendimento/mensagem', { canal: 'simulador', contato, texto });
 
-before(() => { server = createApp({ store: createMemoryStore() }).listen(0); base = `http://127.0.0.1:${server.address().port}`; t = seedDemo(); });
+before(() => { server = createApp({ store: createMemoryStore() }).listen(0); base = `http://127.0.0.1:${server.address().port}`; t = seedDemo(); setHired(t, 'flora', true); });
 after(() => server.close());
 
 test('Alex desativa produtos por flor (composição, nome ou descrição), explica e avisa a equipe', async () => {
@@ -132,7 +132,7 @@ test('Mari: aprovação em lote e checagem de disponibilidade antes de publicar'
 
 test('Caio nunca passa do teto sem autorização e não escala com margem baixa', async () => {
   const { avaliar } = await import('../src/core/agents/caio.js');
-  const t2 = seedDemo(); const tt = t; t = t2;
+  const t2 = seedDemo(); setHired(t2, 'flora', true); const tt = t; t = t2;
   const dec = avaliar(t2).decisoes;
   assert.ok(dec.some((d) => d.acao === 'pedir_teto'), 'aumento que passaria o teto vira pedido de autorização');
   await call('POST', '/agentes/caio/executar');

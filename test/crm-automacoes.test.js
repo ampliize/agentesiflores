@@ -1,5 +1,6 @@
 // CRM sincronizado com a iFlores (servidor falso) e automações com suas proteções.
 import { test, before, after } from 'node:test';
+import { setHired } from '../src/core/team.js';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import { createMemoryStore, db, comLoja } from '../src/core/store.js';
@@ -18,7 +19,7 @@ const api = (method, path, body) => comLoja(t, () => handle({ method, path, body
 function horarioComercial() { let d = new Date(); for (let i = 0; i < 48; i++) { const h = localTime(d); if (h >= '10:00' && h < '19:00') return d; d = new Date(d.getTime() + 30 * 60e3); } return d; }
 
 before(async () => {
-  ativarContexto(); init(createMemoryStore()); t = seedDemo();
+  ativarContexto(); init(createMemoryStore()); t = seedDemo(); setHired(t, 'flora', true);
   recebido = { clientes: [], pedidos: [], alteracoes: [] };
   srv = http.createServer((req, res) => {
     let b = ''; req.on('data', (c) => { b += c; }); req.on('end', () => {

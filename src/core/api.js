@@ -38,7 +38,7 @@ function equipe(t) {
   const dia = new Date(Date.now() - 864e5).toISOString();
   const atv = db().list('activity', t, (a) => a.created_at >= dia);
   const abertas = listTasks(t).filter((x) => ['aberta', 'em_andamento', 'aguardando_dono'].includes(x.status));
-  return AGENT_KEYS.map((k) => {
+  return AGENT_KEYS.filter((k) => k !== 'flora' || hired(t, 'flora')).map((k) => {
     const last = listActivity(t, { agent: k, limit: 1 })[0];
     const trab = currentWork(t, k);
     return { key: k, ...AGENTS[k], contratado: hired(t, k), ativo: active(t, k),

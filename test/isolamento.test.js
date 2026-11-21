@@ -1,6 +1,7 @@
 // REGRA DO PRODUTO: nenhuma loja pode ver, alterar ou receber dados de outra.
 // Estes testes provam o isolamento na camada de dados, na API, nos agentes e sob carga (1000 lojas).
 import { test, before } from 'node:test';
+import { setHired } from '../src/core/team.js';
 import assert from 'node:assert/strict';
 import { createMemoryStore, db, comLoja, IsolationError } from '../src/core/store.js';
 import { init } from '../src/core/index.js';
@@ -15,7 +16,7 @@ delete process.env.ANTHROPIC_API_KEY;
 let A; let B;
 const api = (t, method, path, body) => comLoja(t, () => handle({ method, path, body, tenantId: t }));
 
-before(() => { ativarContexto(); init(createMemoryStore()); A = seedDemo('Loja A'); B = seedDemo('Loja B'); });
+before(() => { ativarContexto(); init(createMemoryStore()); A = seedDemo('Loja A'); B = seedDemo('Loja B'); setHired(A, 'flora', true); setHired(B, 'flora', true); });
 
 test('camada de dados recusa ler, listar, gravar ou apagar dados de outra loja', () => {
   const produtoB = db().list('products', B)[0];
