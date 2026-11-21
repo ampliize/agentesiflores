@@ -13,6 +13,8 @@ export class IFloresClient {
   /** Envia uma alteração feita pelo Alex (produto, estoque, datas, fretes...). */
   async aplicar(change) { return this.conectado ? this.req('POST', '/v1/changes', change) : { demo: true }; }
   async criarPedido(order) { return this.conectado ? this.req('POST', '/v1/orders', order) : null; }
+  /** Visitas, buscas por produto, vendas e funil por dia (analytics da loja). */
+  async analytics(de, ate) { return this.conectado ? this.req('GET', `/v1/analytics/diario?de=${de}&ate=${ate}`) : null; }
   /** Clientes e pedidos alterados desde o cursor: { clientes: [], pedidos: [], cursor }. */
   async alteracoesDesde(cursor) { return this.req('GET', `/v1/sync?desde=${encodeURIComponent(cursor || '')}`); }
   /** Cria ou atualiza um cliente (com id = atualiza). Retorna { id }. */

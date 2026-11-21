@@ -1,6 +1,7 @@
 // ALEX — gerente da floricultura: executa alterações por conversa e orienta o negócio com dados.
 // Toda recomendação responde: o que aconteceu, hipótese, o que fazer agora, o que o Alex pode
 // executar e quando revisar o resultado.
+import { registrarCompras, diagnosticoQueda, comparacaoSemana, sugestoesDivulgacao, analisePromocao, comprasItem, formatarRecomendacao, gerarRecomendacoes, registrarRecomendacoes, revisarRecomendacoes } from './alex-analise.js';
 import { db, serial } from '../store.js';
 import { getConfig, active, AGENTS } from '../team.js';
 import { log, working } from '../events.js';
@@ -96,91 +97,9 @@ export function sugestaoCompras(tenantId, hoje = localDate()) {
 }
 
 // ======================= RECOMENDAÇÕES =======================
-export function gerarRecomendacoes(tenantId, hoje = localDate()) {
-  const rel = relatorioSemanal(tenantId, hoje);
-  const s = getSettings(tenantId);
-  const recs = [];
-  const revisar = addDays(hoje, 7);
-  const v = rel.variacoes;
-  if (v.faturamento < -0.1) {
-    const f = rel.funil; const pior = f.slice(1).map((e) => ({ ...e, queda: e.taxa_anterior ? (e.taxa - e.taxa_anterior) / e.taxa_anterior : 0 })).sort((a, b) => a.queda - b.queda)[0];
-    let hip; let fazer;
-    if (v.visitas < -0.1 && (!pior || pior.queda > -0.1)) { hip = `As visitas caíram ${pct(-v.visitas)}; a conversão se manteve. O problema parece ser atração de clientes.`; fazer = 'Reforçar divulgação: posts dos produtos mais vendidos e anúncios com melhor retorno.'; }
-    else if (pior) { hip = `A etapa "${pior.label}" piorou: ${pct(pior.taxa_anterior)} → ${pct(pior.taxa)}. Clientes estão desistindo nesse ponto.`; fazer = pior.etapa === 'pedidos' ? 'Conferir pagamento e frete: frete alto ou falha no pagamento costumam causar desistência nessa etapa.' : 'Conferir preço, fotos e disponibilidade dos produtos mais vistos.'; }
-    recs.push({ titulo: `Vendas da semana ${sinal(v.faturamento)}`, aconteceu: `Faturamento de ${brl(rel.atual.faturamento)} contra ${brl(rel.anterior.faturamento)} na semana anterior (visitas ${sinal(v.visitas)}, conversão ${sinal(v.conversao)}, ticket ${sinal(v.ticket)}).`, hipotese: hip, fazer_agora: fazer, alex_executa: null, revisar_em: revisar, metrica: { nome: 'faturamento_semana', inicial: rel.atual.faturamento } });
-  }
-  for (const pr of rel.procurados.filter((x) => x.buscas >= 15 && x.conv < 0.05).slice(0, 2)) {
-    const p = getProduct(pr.id); const disp = disponibilidade(p, s);
-    const a = p ? analisarProduto(tenantId, p) : null;
-    recs.push({
-      titulo: `${pr.nome}: muito procurado, pouco vendido`,
-      aconteceu: `${pr.buscas} visualizações e ${pr.vendas} venda(s) na semana (${pct(pr.conv)}).`,
-      hipotese: !disp.ok ? `O produto está indisponível (${disp.motivo}); clientes chegam até ele e não conseguem comprar.` : 'Preço, foto ou descrição podem não estar convencendo.',
-      fazer_agora: !disp.ok ? 'Repor e reativar o produto, ou tirá-lo da divulgação.' : `Revisar foto e descrição; a Sol indica margem de ${a?.mc_pct != null ? pct(a.mc_pct) : 'cálculo indisponível'}, ${a?.mc_pct > 0.45 ? 'há espaço para uma condição especial' : 'pouco espaço para desconto'}.`,
-      alex_executa: !disp.ok && !p.ativo ? { acao: 'ativar_produto', params: { produto: p.nome, ativo: true }, label: `Reativar ${p.nome}` } : null,
-      revisar_em: revisar, metrica: { nome: 'conversao_produto', produto_id: pr.id, inicial: pr.conv },
-    });
-  }
-  const topMargem = rel.top.map((t) => listProducts(tenantId).find((p) => p.nome === t.nome)).filter((p) => p && (p.tipo || 'produto') === 'produto')
-    .map((p) => ({ p, a: analisarProduto(tenantId, p) })).filter((x) => x.a.mc_pct > 0.5 && !x.p.destaque && disponibilidade(x.p, s).ok)[0];
-  if (topMargem) recs.push({
-    titulo: `Destacar ${topMargem.p.nome}`,
-    aconteceu: `Está entre os mais vendidos e deixa ${pct(topMargem.a.mc_pct)} de margem de contribuição (${brl(topMargem.a.mc)} por unidade).`,
-    hipotese: 'Dar mais visibilidade a um produto que vende bem e deixa boa margem aumenta o resultado sem desconto.',
-    fazer_agora: 'Colocar nos destaques da loja e pedir à Mari um post sobre ele.',
-    alex_executa: { acao: 'destacar_produto', params: { produto: topMargem.p.nome, destaque: true }, label: `Destacar ${topMargem.p.nome}` },
-    revisar_em: revisar, metrica: { nome: 'vendas_produto', produto_id: topMargem.p.id, inicial: rel.atual.vendas[topMargem.p.id] || 0 },
-  });
-  const baixa = rel.top.map((t) => listProducts(tenantId).find((p) => p.nome === t.nome)).filter((p) => p && (p.tipo || 'produto') === 'produto').map((p) => ({ p, a: analisarProduto(tenantId, p) })).find((x) => x.a.mc_pct != null && x.a.mc_pct < 0.35);
-  if (baixa) recs.push({
-    titulo: `${baixa.p.nome} vende bem, mas deixa pouco`,
-    aconteceu: `Margem de contribuição de ${pct(baixa.a.mc_pct)} (${brl(baixa.a.mc)} por unidade) e resultado estimado após rateio de ${brl(baixa.a.resultado)}.`,
-    hipotese: 'Mais vendas desse produto aumentam o faturamento, mas pouco o dinheiro que sobra.',
-    fazer_agora: `Consultei a Sol: revise o preço ou a composição. Desconto nesse produto não é recomendado.${(() => { const d = impactoDesconto(tenantId, { produto: baixa.p, descontoPct: 10 }); return d.vendas_extra_necessarias != null ? ` Um desconto de 10% exigiria vender ${pct(d.vendas_extra_necessarias, 0)} a mais só para manter a mesma margem.` : ' Um desconto de 10% deixaria a margem negativa.'; })()}`,
-    alex_executa: null, revisar_em: revisar, metrica: { nome: 'mc_produto', produto_id: baixa.p.id, inicial: baixa.a.mc_pct },
-  });
-  const data = proximasDatas(45, hoje).find((d) => d.peso >= 4);
-  if (data && !comemorativoAtivo(s, data.data) && listProducts(tenantId).some((p) => p.comemorativo)) recs.push({
-    titulo: `${data.nome} em ${data.faltam} dias`,
-    aconteceu: `O catálogo comemorativo não está programado para ${data.nome} (${fmtDia(data.data)}).`,
-    hipotese: 'Clientes começam a procurar presentes de 7 a 10 dias antes.',
-    fazer_agora: `Programar o catálogo comemorativo, a sugestão de compras de flores e os conteúdos da data.`,
-    alex_executa: { acao: 'data_comemorativa', params: { inicio: addDays(data.data, -7), fim: data.data, nome: data.nome, ativo: true }, label: `Ativar catálogo de ${fmtDia(addDays(data.data, -7))} a ${fmtDia(data.data)}` },
-    revisar_em: addDays(data.data, 1), metrica: { nome: 'faturamento_semana', inicial: rel.atual.faturamento },
-  });
-  return recs;
-}
-
-/** Salva as recomendações como tarefas do tipo 'recomendacao' (sem duplicar). */
-export function registrarRecomendacoes(tenantId) {
-  return gerarRecomendacoes(tenantId).map((r) => createTask(tenantId, { responsavel: 'alex', solicitante: 'alex', tipo: 'recomendacao', titulo: r.titulo, detalhes: r.fazer_agora, acao: r.alex_executa, extra: { recomendacao: r } }));
-}
-
-/** Executa a ação proposta em uma recomendação (com aprovação do dono). */
-export function executarRecomendacao(tenantId, taskId) {
-  const t = getTask(taskId);
-  if (!t || t.tenant_id !== tenantId) throw new Error('Recomendação não encontrada');
-  if (!t.acao) { updateTask(taskId, { status: 'concluida', resultado: 'Marcada como feita pelo dono.', executada_em: now() }, 'dono'); return { texto: 'Marcada como feita.' }; }
-  const r = executar(tenantId, t.acao.acao, t.acao.params, { comando: t.titulo, confirmado: true });
-  updateTask(taskId, { status: r.executado ? 'concluida' : t.status, resultado: r.texto, executada_em: now(), change_id: r.change_id }, 'dono');
-  return r;
-}
-
-/** Revisa recomendações executadas cuja data de revisão chegou. */
-export function revisarRecomendacoes(tenantId, hoje = localDate()) {
-  const feitas = listTasks(tenantId, { tipo: 'recomendacao', status: 'concluida' }).filter((t) => !t.revisada && t.recomendacao?.revisar_em <= hoje);
-  for (const t of feitas) {
-    const m = t.recomendacao.metrica; const rel = relatorioSemanal(tenantId, hoje);
-    let atual = null;
-    if (m.nome === 'faturamento_semana') atual = rel.atual.faturamento;
-    if (m.nome === 'vendas_produto') atual = rel.atual.vendas[m.produto_id] || 0;
-    if (m.nome === 'conversao_produto') { const b = rel.atual.buscas[m.produto_id] || 0; atual = b ? (rel.atual.vendas[m.produto_id] || 0) / b : 0; }
-    const txt = atual == null ? 'Sem dados suficientes para medir.' : `Antes: ${m.inicial?.toFixed?.(2) ?? m.inicial}; agora: ${atual.toFixed(2)} (${sinal(variacao(atual, m.inicial))}). Outros fatores (sazonalidade, anúncios) também influenciam esse número.`;
-    updateTask(t.id, { revisada: true, revisao: { em: now(), texto: txt } });
-    log(tenantId, 'alex', `Revisou o resultado de "${t.titulo}": ${txt}`, { type: 'revisao' });
-  }
-  return feitas.length;
-}
+// ======================= RECOMENDAÇÕES E ANÁLISE (alex-analise.js) =======================
+export { gerarRecomendacoes, registrarRecomendacoes, executarRecomendacao, revisarRecomendacoes, janela, decomporVariacao, importarAnalytics } from './alex-analise.js';
+registrarCompras(sugestaoCompras);
 
 // ======================= CONVERSA COM O DONO =======================
 export function getChat(tenantId, agente = 'alex') {
@@ -232,12 +151,22 @@ function interpretar(tenantId, texto, pendente) {
   }
   if (/(paus|pare|parar|suspend|para)\w* (de )?(receber )?(novos )?pedidos/.test(t)) return { acao: 'receber_pedidos', params: { ativo: false } };
   if (/(volt|retom|reabr)\w* (a )?(receber )?pedidos/.test(t)) return { acao: 'receber_pedidos', params: { ativo: true } };
-  if (/(destaq|destac)/.test(t)) {
+  if (/(destaq|pagina inicial|em primeiro)/.test(t) && !/(qual|quais|vale a pena)/.test(t)) {
+    const tira = /(tir|remov|retir|sai)/.test(t);
+    const m = t.match(/(?:coloque|coloca|ponha|poe|bota|destaque|destaca|tire|tira|remova|retire)\s+(?:o |a |os |as )?(.+?)(?:\s+(?:em destaque|nos destaques|no destaque|na pagina inicial|em primeiro|dos destaques|da pagina inicial|da home)|$)/);
+    if (m && m[1] && !/^(?:do|da|dos|das|um|uma)$/.test(m[1])) return { acao: 'destacar_na_home', params: { produto: m[1].trim(), destaque: !tira } };
+  }
+  if (/(destaq|destac)/.test(t) && !/(qual|quais|vale a pena)/.test(t)) {
     const destaque = !/(tir|remov|sai)/.test(t);
     const p = t.replace(/.*(?:destaque|destaques|destacar|destaca|destaque o|destaque a)\s+(?:o |a |os |as |do |da |dos )?/, '').replace(/\s*(?:dos|nos) destaques.*/, '').replace(/^(tire|tira|remova)\s+(o |a )?/, '');
     return { acao: 'destacar_produto', params: { produto: p, destaque } };
   }
   if ((m = t.match(/^(?:alex,?\s*)?(ative|ativa|ativar|reative|reativa|desative|desativa|desativar)\s+(?:o |a )?(?:produto )?(.+?)[.!]?$/))) return { acao: 'ativar_produto', params: { produto: m[2], ativo: !/^des/.test(m[1]) } };
+  if (/quanto .*(comprar|compro|compra)/.test(t)) { const item = t.replace(/.*quanto (?:de |do |da |dos |das )?/, '').replace(/ ?(devo|preciso|vou|tenho que)? ?(comprar|compro|compra).*/, '').trim(); if (item && item.length > 2) return { info: 'compras_item', item }; }
+  if (/(caiu|cairam|caiam|diminu|queda|vendendo menos|menos venda)/.test(t)) return { info: 'queda' };
+  if (/(o que mudou|semana passada|em relacao a semana|comparad[ao] com)/.test(t)) return { info: 'comparacao' };
+  if (/(promocao|promocoes|desconto)/.test(t) && /(vale|faz sentido|devo|posso|compensa|compens)/.test(t)) return { info: 'promocao' };
+  if (/(divulg|destaqu|destacar|promover)/.test(t) && /(qual|quais|devo|esta semana|vale)/.test(t)) return { info: 'divulgacao' };
   if (/(compra|comprar|fornecedor|insumo|quantas (?:hastes|flores))/.test(t)) return { info: 'compras' };
   if (/(semana|semanal|relatorio)/.test(t)) return { info: 'semanal' };
   if (/(recomend|o que (?:devo|eu devo|fazer)|prioridad|cair|caiu|cairam|queda|caindo|por que .*vend)/.test(t)) return { info: 'recomendacoes' };
@@ -254,8 +183,8 @@ function formatarSemanal(r) {
     `Procurados x vendidos: ${r.procurados.slice(0, 4).map((x) => `${x.nome} ${x.buscas}/${x.vendas}`).join(', ')}.`].join('\n');
 }
 function formatarRecs(recs) {
-  if (!recs.length) return 'Não encontrei nada fora do normal nos dados desta semana.';
-  return recs.map((r, i) => `${i + 1}. ${r.titulo}\n   O que aconteceu: ${r.aconteceu}\n   Hipótese: ${r.hipotese}\n   O que fazer agora: ${r.fazer_agora}\n   O que eu posso executar: ${r.alex_executa ? r.alex_executa.label + ' (é só aprovar em Tarefas)' : 'nada automático; depende de você'}\n   Revisar em: ${fmtDia(r.revisar_em)}`).join('\n\n');
+  if (!recs.length) return 'Não encontrei nada fora do normal nos dados desta semana. Quando houver algo, eu trago com os números.';
+  return recs.map((r, i) => formatarRecomendacao(r, i + 1)).join('\n\n');
 }
 function formatarCompras(c) {
   return [`Estimativa de consumo de ${fmtDia(c.periodo.de)} a ${fmtDia(c.periodo.ate)}${c.motivo_fator ? ` (×${c.fator} por ${c.motivo_fator})` : ''}:`,
@@ -264,11 +193,20 @@ function formatarCompras(c) {
 }
 const AJUDA = 'Posso executar na loja, por exemplo:\n• "Acabou a rosa vermelha. Desative os produtos que usam essa flor."\n• "No dia 7 não teremos entregas."\n• "Ative o catálogo de data comemorativa do dia 10 ao dia 12."\n• "Atualize o estoque do Buquê Encanto para 15 unidades."\n• "Configure o frete da Vila Mariana para R$12."\n• "Dia 24 vamos abrir das 8h às 13h."\n• "Desfaça a última alteração."\nE também: "resumo do dia", "relatório da semana", "o que devo fazer?", "sugestão de compras".';
 
-async function responderInfo(tenantId, info) {
+async function responderInfo(tenantId, info, it = {}) {
   if (info === 'resumo') return resumoDiario(tenantId).texto;
   if (info === 'semanal') return formatarSemanal(relatorioSemanal(tenantId));
   if (info === 'compras') return formatarCompras(sugestaoCompras(tenantId));
-  if (info === 'recomendacoes') { const recs = gerarRecomendacoes(tenantId); registrarRecomendacoes(tenantId); return formatarRecs(recs); }
+  if (info === 'compras_item') return comprasItem(tenantId, it.item, sugestaoCompras(tenantId)).texto;
+  if (info === 'queda') { const d = diagnosticoQueda(tenantId); const c = d.recomendacoes.find((r) => r.autorizacao.acao); return { texto: d.texto, pendente: c ? c.autorizacao.acao : null }; }
+  if (info === 'comparacao') return comparacaoSemana(tenantId).texto;
+  if (info === 'promocao') return analisePromocao(tenantId, null).texto;
+  if (info === 'divulgacao') { const d = sugestoesDivulgacao(tenantId); return { texto: d.texto + (d.pergunta ? `\n\n${d.pergunta}` : ''), pendente: d.pendente }; }
+  if (info === 'recomendacoes') {
+    const recs = gerarRecomendacoes(tenantId); registrarRecomendacoes(tenantId);
+    const c = recs.find((r) => r.autorizacao.acao);
+    return { texto: formatarRecs(recs) + (c ? `\n\nSe quiser, respondo "sim" e executo a primeira proposta com ação: ${c.titulo}.` : ''), pendente: c ? c.autorizacao.acao : null };
+  }
   return AJUDA;
 }
 
@@ -278,7 +216,10 @@ Regras:
 - Use apenas as ferramentas para alterar a loja; nunca diga que fez algo que nenhuma ferramenta confirmou.
 - Se faltar um dado ou houver ambiguidade (ex.: "deste produto", "desse bairro"), faça UMA pergunta curta antes de executar.
 - Depois de uma alteração em lote, explique o que encontrou e o que executou, e lembre que produtos sem a informação no cadastro podem ter ficado de fora.
-- Toda recomendação deve dizer: o que aconteceu, a hipótese, o que fazer agora, o que você pode executar e quando revisar.
+- Recomendações seguem SEMPRE as cinco partes: 1) dado (números e período), 2) o que pode significar, 3) recomendação e por quê, 4) pergunta se o dono autoriza a execução, 5) como vai acompanhar o resultado.
+- Separe fatos de hipóteses. Diga "hipótese" quando não estiver medido. Nunca prometa que uma mudança aumenta as vendas.
+- Só afirme que um produto é o mais vendido ou que tem boa taxa de compra com os números da ferramenta. Se a amostra for pequena, diga.
+- Uma ação que o dono pediu com comando claro se executa. Uma ação que você mesmo recomendou só se executa depois de o dono aprovar.
 - Antes de recomendar descontos ou promoções, consulte a análise financeira (ferramenta consultar_sol).
 - Estimativas de compra não são quantidades exatas.
 Hoje é ${localDate()}. Permissões: ${JSON.stringify(getConfig(tenantId, 'alex').permissoes)}. ${getConfig(tenantId, 'alex').instrucoes || ''}`;
@@ -295,6 +236,12 @@ function llmTools(tenantId, comando) {
   tools.push(info('relatorio_semanal', 'Comparação da semana com a anterior, funil, mais vendidos e procurados x vendidos.', () => relatorioSemanal(tenantId)));
   tools.push(info('sugestao_compras', 'Estimativa de compra de flores e insumos.', () => sugestaoCompras(tenantId)));
   tools.push(info('recomendacoes', 'Recomendações com hipótese, ação e data de revisão (registradas em Tarefas).', () => { registrarRecomendacoes(tenantId); return gerarRecomendacoes(tenantId); }));
+  const tool = (name, description, props, required, run) => ({ name, description, input_schema: { type: 'object', additionalProperties: false, required, properties: props }, run });
+  tools.push(info('diagnostico_queda', 'Diagnóstico de queda de vendas: decompõe a variação em visitas, taxa de compra e ticket, e traz as recomendações.', () => diagnosticoQueda(tenantId).texto));
+  tools.push(info('comparar_semanas', 'Comparação dos últimos 7 dias com os 7 anteriores, com o que mais mudou.', () => comparacaoSemana(tenantId).texto));
+  tools.push(info('sugestoes_divulgacao', 'Produtos que valem divulgar agora, com procura, taxa de compra e margem.', () => sugestoesDivulgacao(tenantId).texto));
+  tools.push(tool('analise_promocao', 'Efeito de uma promoção sobre a margem e sobre a capacidade. Sem produto, analisa os candidatos.', { produto: { type: ['string', 'null'] }, desconto_pct: { type: ['number', 'null'] } }, [], (i) => analisePromocao(tenantId, i.produto || null, i.desconto_pct || 10).texto));
+  tools.push(tool('compras_item', 'Quanto comprar de uma flor ou insumo, com consumo previsto, perda, estoque e limitações.', { item: { type: 'string' } }, ['item'], (i) => comprasItem(tenantId, i.item, sugestaoCompras(tenantId)).texto));
   tools.push({ name: 'consultar_sol', description: 'Pergunta à Sol o impacto de um desconto em um produto.', input_schema: { type: 'object', additionalProperties: false, required: ['produto', 'desconto_pct'], properties: { produto: { type: 'string' }, desconto_pct: { type: 'number' } } },
     run: ({ produto, desconto_pct }) => { const p = listProducts(tenantId).find((x) => norm(x.nome).includes(norm(produto))); return p ? impactoDesconto(tenantId, { produto: p, descontoPct: desconto_pct }) : { erro: 'produto não encontrado' }; } });
   return tools;
@@ -314,7 +261,7 @@ async function conversarAgora(tenantId, texto) {
     const it = interpretar(tenantId, texto, chat.pendente);
     chat.pendente = null;
     if (it.texto) return { texto: it.texto };
-    if (it.info) return { texto: await responderInfo(tenantId, it.info) };
+    if (it.info) { const x = await responderInfo(tenantId, it.info, it); if (typeof x === 'string') return { texto: x }; if (x.pendente) chat.pendente = x.pendente; return { texto: x.texto }; }
     if (it.ajuda) return { texto: AJUDA };
     const r = executar(tenantId, it.acao, it.params, { comando: texto, confirmado: it.confirmado });
     if (r.negado) return { texto: r.negado };

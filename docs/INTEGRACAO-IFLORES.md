@@ -75,6 +75,7 @@ local (modo demonstração).
 | Método | Rota | Uso | Resposta |
 |---|---|---|---|
 | GET | `/v1/store` | testar conexão | `{ id, nome }` |
+| GET | `/v1/analytics/diario?de=AAAA-MM-DD&ate=AAAA-MM-DD` | **Alex**: visitas, páginas visitadas, buscas e vendas por produto, funil por dia | `{ dias: [{ data, visitas, visitas_pagina: { home, categoria, produto }, carrinhos, checkouts, pedidos, faturamento, vendas: { produto_id: qtd }, buscas: { produto_id: visualizações } }] }` |
 | GET | `/v1/sync?desde={cursor}` | CRM: clientes e pedidos alterados desde o cursor | `{ cursor, clientes: [...], pedidos: [...] }` |
 | GET | `/v1/catalog` | produtos (com composição), insumos, entregas, fretes | ver formato abaixo |
 | POST | `/v1/customers` · PUT `/v1/customers/{id}` | contatos criados/editados pela Flora ou no CRM | `{ id }` |
@@ -87,6 +88,7 @@ Formatos:
 - **alteração**: `{ change_id, descricao, ops: [{ coll, id, after }] }`. `after` é o documento completo depois da mudança; `null` remove.
 
 Regras:
+- Sem o `/v1/analytics/diario`, o Alex não consegue dizer de onde vêm os visitantes nem o efeito dos destaques da página inicial. As recomendações mostram essa limitação.
 - `GET /v1/sync` deve devolver tudo que mudou desde o cursor, em ordem, e um cursor novo. Reenviar o mesmo registro é seguro: a Equipe faz upsert por `id`.
 - Os envios da Equipe passam por uma fila: em erro, ela tenta de novo com espera crescente (1 min, 2 min, 4 min… até 6 h, 8 tentativas). Responda 2xx só quando gravou.
 

@@ -24,6 +24,7 @@ export const DEFAULT_SETTINGS = {
   fretes: [],                      // [{ bairro, valor, ativo }]
   modo_comemorativo: [],           // [{ nome, inicio, fim }]
   categorias: ['Buquês', 'Arranjos', 'Plantas', 'Cestas', 'Complementos'],
+  destaques_home: [],              // ids dos produtos da página inicial, na ordem de exibição
 };
 
 export function getSettings(tenantId) {

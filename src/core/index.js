@@ -6,6 +6,7 @@ import * as caio from './agents/caio.js';
 import * as alex from './agents/alex.js';
 import { executarAutomacoes, registrarAutomacoes, enviarResumoDono } from './automacoes.js';
 import { sincronizar, processarFila } from './crm.js';
+import { importarAnalytics } from './agents/alex-analise.js';
 import { log } from './events.js';
 
 let registrado = false;
@@ -26,7 +27,7 @@ export async function rotinas(tenantId, { forcar = false } = {}) {
     try { await fn(); feitos.push(nome); } catch (e) { log(tenantId, agente || 'alex', `Erro na rotina ${nome}: ${e.message}`, { level: 'error' }); }
   };
   await run('automacoes', null, 10 * 60e3, () => executarAutomacoes(tenantId));
-  await run('sincronizacao', null, 15 * 60e3, async () => { await sincronizar(tenantId).catch(() => {}); await processarFila(tenantId); });
+  await run('sincronizacao', null, 15 * 60e3, async () => { await sincronizar(tenantId).catch(() => {}); await importarAnalytics(tenantId).catch(() => {}); await processarFila(tenantId); });
   await run('mari:publicar', 'mari', 60e3, () => mari.publicarDevidos(tenantId));
   await run('mari:plano', 'mari', 7 * 24 * H, () => mari.planejarSemana(tenantId));
   await run('caio', 'caio', 6 * H, () => caio.analisar(tenantId));

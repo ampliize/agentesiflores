@@ -8,7 +8,7 @@ import { createApp } from '../src/server/index.js';
 import { getProduct, getSettings, verificarData } from '../src/core/catalog.js';
 import { precoSugerido } from '../src/core/finance.js';
 import { setHired } from '../src/core/team.js';
-import { addDays, localDate } from '../src/core/util.js';
+import { addDays, localDate, weekday } from '../src/core/util.js';
 
 delete process.env.ANTHROPIC_API_KEY;
 process.env.IFLORES_PLATFORM_KEY = 'plat';
@@ -61,14 +61,14 @@ test('Alex respeita permissões', async () => {
   await call('PUT', '/agentes/alex/config', { permissoes: { fretes: true } });
 });
 
-test('Recomendações do Alex trazem hipótese, ação e revisão; a executável roda com aprovação', async () => {
+test('Recomendações do Alex trazem dado, interpretação, autorização e acompanhamento; a aprovada roda', async () => {
   const recs = await call('GET', '/alex/recomendacoes');
-  assert.ok(recs.length >= 3);
-  for (const r of recs) for (const k of ['aconteceu', 'hipotese', 'fazer_agora', 'revisar_em']) assert.ok(r.recomendacao[k], k);
-  const exec = recs.find((r) => r.acao?.acao === 'destacar_produto');
+  assert.ok(recs.length >= 2);
+  for (const r of recs) { assert.ok(r.recomendacao.dado && r.recomendacao.interpretacao && r.recomendacao.acompanhamento); }
+  const exec = recs.find((r) => r.recomendacao.autorizacao.acao?.acao === 'definir_destaques');
   assert.ok(exec);
   await call('POST', `/tarefas/${exec.id}/aprovar`);
-  assert.equal(getProduct(`${t}:encanto`).destaque, true);
+  assert.equal(getSettings(t).destaques_home[0], exec.recomendacao.autorizacao.acao.params.ids[0]);
 });
 
 test('Sugestão de compras é estimativa e mostra limitações', async () => {
@@ -91,9 +91,10 @@ test('Sol: preço com premissas, desconto e diagnóstico de margem', async () =>
   assert.match((await sol('Meu buquê custa R$40. Por quanto posso vender?')).texto, /Cálculo parcial/);
 });
 
+const diaSeguro = weekday(addDays(localDate(), 1)) === 'dom' ? 'depois de amanhã' : 'amanhã';
 test('Flora: resumo antes do pedido, link sem duplicar, pagamento só pelo sistema', async () => {
   const c = '5511955554444';
-  for (const m of ['quero flores para o aniversário da minha mãe, até 200', 'a orquídea', 'não', 'entrega', 'amanhã', 'de tarde', 'Rua Afonso Celso, 100 - Vila Mariana', 'Dona Célia', 'Parabéns, mãe!']) await cliente(m, c);
+  for (const m of ['quero flores para o aniversário da minha mãe, até 200', 'a orquídea', 'não', 'entrega', diaSeguro, 'de tarde', 'Rua Afonso Celso, 100 - Vila Mariana', 'Dona Célia', 'Parabéns, mãe!']) await cliente(m, c);
   const resumo = await cliente('Marina', c);
   assert.match(resumo.resposta, /Posso criar o pedido/);
   assert.equal(db().list('orders', t, (o) => o.contato === c).length, 0, 'nada criado antes da confirmação');

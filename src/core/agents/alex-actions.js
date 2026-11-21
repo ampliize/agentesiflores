@@ -6,8 +6,9 @@
 import { db } from '../store.js';
 import { getConfig } from '../team.js';
 import {
-  listProducts, produtosComItem, acharProduto, getSettings, applyChanges, listChanges, undoChange, disponibilidade,
+  listProducts, produtosComItem, acharProduto, getSettings, applyChanges, listChanges, undoChange, disponibilidade, getProduct,
 } from '../catalog.js';
+import { createTask } from '../tasks.js';
 import { brl, fmtDia, norm, localDate } from '../util.js';
 
 const settingsOp = (tenantId, patch) => ({ coll: 'settings', id: tenantId, after: { ...getSettings(tenantId), ...patch } });
@@ -178,6 +179,50 @@ export const ACTIONS = {
       const fretes = atual ? s.fretes.map((f) => (f === atual ? { ...f, valor, ativo: true } : f)) : [...s.fretes, { bairro, valor, ativo: true }];
       const change = applyChanges(tenantId, { actor: 'alex', comando: ctx?.comando, descricao: `Frete ${atual?.bairro || bairro}: ${atual ? brl(atual.valor) : 'novo'} → ${brl(valor)}`, ops: [settingsOp(tenantId, { fretes })] });
       return { executado: true, change_id: change.id, texto: atual ? `Frete de ${atual.bairro} alterado de ${brl(atual.valor)} para ${brl(valor)}.` : `Passamos a entregar em ${bairro} com frete de ${brl(valor)}.` };
+    },
+  },
+  destacar_na_home: {
+    descricao: 'Coloca um produto em primeiro na página inicial, mantendo os demais destaques atrás (destaque=false tira da página inicial).',
+    params: { produto: 'string', destaque: 'boolean?' },
+    run(tenantId, { produto, destaque = true }, ctx) {
+      const neg = permitido(tenantId, 'categorias'); if (neg) return neg;
+      const ps = acharProduto(tenantId, produto);
+      if (!ps.length) return { pergunta: `Não encontrei "${produto}" no catálogo. Qual é o nome do produto?` };
+      if (ps.length > 1) return { pergunta: `Qual deles: ${ps.map((p) => p.nome).join(' ou ')}?` };
+      const p = ps[0]; const s = getSettings(tenantId); const atuais = s.destaques_home || [];
+      if (destaque && !disponibilidade(p, s).ok) return { texto: `${p.nome} está indisponível (${disponibilidade(p, s).motivo}), então não coloquei na página inicial.` };
+      const nova = destaque ? [p.id, ...atuais.filter((id) => id !== p.id)].slice(0, 6) : atuais.filter((id) => id !== p.id);
+      const nomes = (ids) => ids.map((id) => getProduct(id)?.nome).filter(Boolean).join(', ') || 'nenhum';
+      const change = applyChanges(tenantId, { actor: 'alex', comando: ctx?.comando, descricao: destaque ? `${p.nome} em primeiro na página inicial` : `${p.nome} fora da página inicial`, ops: [settingsOp(tenantId, { destaques_home: nova })] });
+      return { executado: true, change_id: change.id, texto: destaque ? `Coloquei ${p.nome} em primeiro na página inicial. Ordem agora: ${nomes(nova)}. Antes: ${nomes(atuais)}.` : `Tirei ${p.nome} da página inicial. Ordem agora: ${nomes(nova)}.` };
+    },
+  },
+  definir_destaques: {
+    descricao: 'Define os produtos da página inicial, na ordem em que devem aparecer (até 6). Produtos indisponíveis são deixados de fora.',
+    params: { ids: 'string[]?', produtos: 'string[]?' },
+    run(tenantId, { ids, produtos }, ctx) {
+      const neg = permitido(tenantId, 'categorias'); if (neg) return neg;
+      const s = getSettings(tenantId);
+      let lista = (ids || []).map(getProduct).filter((p) => p && p.tenant_id === tenantId);
+      if (!lista.length && produtos?.length) lista = produtos.map((n) => acharProduto(tenantId, n)).flat().filter((p) => p.tenant_id === tenantId);
+      if (!lista.length) return { pergunta: 'Quais produtos devo colocar nos destaques da página inicial, e em que ordem?' };
+      const indisponiveis = lista.filter((p) => !disponibilidade(p, s).ok);
+      lista = lista.filter((p) => disponibilidade(p, s).ok).slice(0, 6);
+      if (!lista.length) return { texto: `Não coloquei nenhum: ${indisponiveis.map((p) => p.nome).join(', ')} estão indisponíveis.` };
+      const antes = (s.destaques_home || []).map((id) => getProduct(id)?.nome).filter(Boolean);
+      const change = applyChanges(tenantId, { actor: 'alex', comando: ctx?.comando, descricao: `Destaques da página inicial: ${lista.map((p) => p.nome).join(', ')}`, ops: [settingsOp(tenantId, { destaques_home: lista.map((p) => p.id) })] });
+      const aviso = indisponiveis.length ? ` Deixei de fora ${indisponiveis.map((p) => p.nome).join(', ')} porque estão indisponíveis.` : '';
+      return { executado: true, change_id: change.id, texto: `Coloquei na página inicial, nesta ordem: ${lista.map((p) => p.nome).join(', ')}. Antes eram: ${antes.join(', ') || 'nenhum'}.${aviso}` };
+    },
+  },
+  pedir_campanha: {
+    descricao: 'Pede ao Caio uma proposta de campanha para um produto. Nada é publicado sem aprovação e o teto de gasto é respeitado.',
+    params: { produto_id: 'string' },
+    run(tenantId, { produto_id }, ctx) {
+      const p = getProduct(produto_id);
+      if (!p || p.tenant_id !== tenantId) return { texto: 'Não encontrei esse produto.' };
+      createTask(tenantId, { responsavel: 'caio', solicitante: 'alex', tipo: 'pedido', titulo: `Propor campanha para ${p.nome}`, detalhes: 'Pedido do Alex com base em margem e vendas. Respeitar o teto de gasto.' });
+      return { executado: true, texto: `Pedi ao Caio uma proposta de campanha para ${p.nome}. Ela aparece em Tarefas para sua aprovação.` };
     },
   },
   desfazer: {

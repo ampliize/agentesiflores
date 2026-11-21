@@ -81,7 +81,9 @@ export function seedDemo(nome = 'Floricultura Jardim Encantado') {
     }
     const descontos = round2(fat * (recente ? 0.06 : 0.015));
     const buscas = Object.fromEntries(P.filter((p) => p.busca).map((p) => [pid(p.id), Math.round((p.busca / 7) * (0.7 + r() * 0.6))]));
-    db().put('dias', { id: `${t}:${data}`, tenant_id: t, data, visitas, carrinhos, checkouts, pedidos, faturamento: round2(fat - descontos), descontos, vendas, buscas });
+    const home = Math.round(visitas * (0.58 + r() * 0.08)); const categoria = Math.round(visitas * 0.22);
+    const visitas_pagina = { home, categoria, produto: Math.max(0, visitas - home - categoria) };
+    db().put('dias', { id: `${t}:${data}`, tenant_id: t, data, visitas, carrinhos, checkouts, pedidos, faturamento: round2(fat - descontos), descontos, vendas, buscas, visitas_pagina });
   }
 
   // campanhas: soma 60/dia = teto; a de rosas vende muito bem; uma anuncia produto esgotado
