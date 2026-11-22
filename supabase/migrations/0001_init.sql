@@ -27,7 +27,7 @@ alter table public.docs enable row level security;
 revoke all on public.docs from anon, authenticated;
 
 -- Atualiza updated_at automaticamente
-create or replace function public.docs_touch() returns trigger language plpgsql as $$
+create or replace function public.docs_touch() returns trigger language plpgsql set search_path = '' as $$
 begin
   new.updated_at = now();
   return new;
