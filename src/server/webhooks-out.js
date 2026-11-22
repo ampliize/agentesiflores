@@ -6,7 +6,7 @@ import { db } from '../core/store.js';
 
 export function iniciarWebhooks() {
   bus.on('webhook', async ({ tenantId, event, payload }) => {
-    const hook = db().get('tenants', tenantId)?.webhook;
+    const hook = (await db().get('tenants', tenantId))?.webhook;
     if (!hook?.enabled || !hook.url) return;
     const body = JSON.stringify({ event, tenant_id: tenantId, sent_at: new Date().toISOString(), data: payload });
     const sig = crypto.createHmac('sha256', hook.secret || '').update(body).digest('hex');

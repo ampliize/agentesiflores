@@ -17,17 +17,19 @@ if (PROVEDOR() !== 'openai' || !process.env.OPENAI_API_KEY || !process.env.OPENA
 if (!aiEnabled()) { console.error('IA não ativa.'); process.exit(2); }
 
 init(createMemoryStore());
-const foto = (t) => ({ destaques: JSON.stringify(getSettings(t).destaques_home), mudancas: db().list('changes', t).length, produtos: JSON.stringify(listProducts(t).map((p) => [p.id, p.ativo, p.estoque])) });
+const foto = async (t) => ({ destaques: JSON.stringify((await getSettings(t)).destaques_home), mudancas: (await db().list('changes', t)).length, produtos: JSON.stringify((await listProducts(t)).map((p) => [p.id, p.ativo, p.estoque])) });
 const resultados = [];
 for (const c of CENARIOS) {
-  const t = seedDemo(`Avaliação ${c.id}`);
+  const t = await seedDemo(`Avaliação ${c.id}`);
   await comLoja(t, async () => {
-    const antes = foto(t); const trace = [];
+    const antes = await foto(t); const trace = [];
     const { texto } = await AL.conversar(t, c.pergunta, { trace });
-    const depois = foto(t);
+    const depois = await foto(t);
     const mudouLoja = antes.mudancas !== depois.mudancas || antes.produtos !== depois.produtos || antes.destaques !== depois.destaques;
-    const destaque1 = getSettings(t).destaques_home[0];
-    const r = { texto, rastro: trace, mudouLoja, estado: { destaques_home: getSettings(t).destaques_home, nomeDestaque1: destaque1 ? db().get('products', destaque1)?.nome : null } };
+    const destaques = (await getSettings(t)).destaques_home;
+    const destaque1 = destaques[0];
+    const nomeDestaque1 = destaque1 ? (await db().get('products', destaque1))?.nome : null;
+    const r = { texto, rastro: trace, mudouLoja, estado: { destaques_home: destaques, nomeDestaque1 } };
     const falhas = [c.deve(r), c.deve2(r), c.proibido(r)].filter((x) => x !== true && x !== null && x !== undefined);
     resultados.push({ id: c.id, pergunta: c.pergunta, passou: falhas.length === 0, falhas, rastro: trace.map((x) => x.nome), resposta: texto });
   });

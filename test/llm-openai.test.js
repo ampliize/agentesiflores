@@ -59,34 +59,34 @@ test('ferramentas vão com schema estrito e o resultado volta ao modelo', async 
 });
 
 test('clique do dono em "coloque em destaque" altera a loja por meio do modelo', async () => {
-  const t = seedDemo('Loja OpenAI');
+  const t = await seedDemo('Loja OpenAI');
   await comLoja(t, async () => {
-    const antes = getSettings(t).destaques_home;
+    const antes = (await getSettings(t)).destaques_home;
     const trace = [];
     const r = await AL.conversar(t, 'Alex, coloque os girassóis em destaque', { trace });
     assert.equal(trace[0]?.nome, 'destacar_na_home');
     assert.equal(r.texto, 'Pronto: coloquei o produto em primeiro na página inicial.');
-    const depois = getSettings(t).destaques_home;
+    const depois = (await getSettings(t)).destaques_home;
     assert.notDeepEqual(depois, antes);
-    assert.equal(db().get('products', depois[0]).nome.includes('Girass'), true);
+    assert.equal((await db().get('products', depois[0])).nome.includes('Girass'), true);
   });
 });
 
 test('pergunta de diagnóstico usa a ferramenta e não altera nada sozinha', async () => {
-  const t = seedDemo('Loja diag');
+  const t = await seedDemo('Loja diag');
   await comLoja(t, async () => {
-    const mudancasAntes = db().list('changes', t).length;
+    const mudancasAntes = (await db().list('changes', t)).length;
     const trace = [];
     await AL.conversar(t, 'Minhas vendas caíram. O que devo fazer?', { trace });
     assert.equal(trace[0]?.nome, 'diagnostico_queda');
-    assert.equal(db().list('changes', t).length, mudancasAntes);
+    assert.equal((await db().list('changes', t)).length, mudancasAntes);
   });
 });
 
 test('o uso fica registrado por loja, com provedor e modelo', async () => {
-  const t = seedDemo('Loja uso');
+  const t = await seedDemo('Loja uso');
   await comLoja(t, async () => { await AL.conversar(t, 'oi'); });
-  const u = db().list('uso_ia', t)[0];
+  const u = (await db().list('uso_ia', t))[0];
   assert.ok(u && u.chamadas >= 1);
   assert.equal(u.provedor, 'openai');
   assert.equal(u.modelo, 'modelo-de-teste');

@@ -38,24 +38,24 @@ const BAIRROS = [['Vila Mariana', 12], ['Moema', 15], ['Saúde', 12], ['Jardins'
 
 function rnd(seed) { let x = seed; return () => { x = (x * 16807) % 2147483647; return (x - 1) / 2147483646; }; }
 
-export function seedDemo(nome = 'Floricultura Jardim Encantado') {
+export async function seedDemo(nome = 'Floricultura Jardim Encantado') {
   const tenantId = `loja_demo_${uid().slice(0, 6)}`;
   const t = tenantId; const hoje = localDate(); const r = rnd(42);
-  db().put('tenants', { id: t, tenant_id: t, name: nome, iflores_store_id: null, demo: true, status: 'active',
+  await db().put('tenants', { id: t, tenant_id: t, name: nome, iflores_store_id: null, demo: true, status: 'active',
     plano: { agentes: Object.fromEntries(AGENT_KEYS.map((k) => [k, k !== 'flora'])), modelo: 'combo_validacao' },
     iflores: { base_url: '', token: '', connected: false },
     integrations: { whatsapp: { connected: false }, meta_ads: { connected: false }, google_ads: { connected: false }, instagram: { connected: false } },
     webhook: { url: '', enabled: false } });
 
   const iid = (k) => `${t}:${k}`; const pid = (k) => `${t}:${k}`;
-  for (const [k, nomeI, un, custo, tipo, perda, estoque, multiplo] of INSUMOS) db().put('insumos', { id: iid(k), tenant_id: t, nome: nomeI, unidade: un, custo, tipo, perda_pct: perda, estoque, multiplo });
+  for (const [k, nomeI, un, custo, tipo, perda, estoque, multiplo] of INSUMOS) await db().put('insumos', { id: iid(k), tenant_id: t, nome: nomeI, unidade: un, custo, tipo, perda_pct: perda, estoque, multiplo });
   for (const p of P) {
-    db().put('products', { id: pid(p.id), tenant_id: t, nome: p.nome, preco: p.preco, categoria: p.categoria, descricao: p.descricao, tags: p.tags || [], tipo: p.tipo || 'produto', ativo: true, destaque: ['primavera', 'orquidea'].includes(p.id),
+    await db().put('products', { id: pid(p.id), tenant_id: t, nome: p.nome, preco: p.preco, categoria: p.categoria, descricao: p.descricao, tags: p.tags || [], tipo: p.tipo || 'produto', ativo: true, destaque: ['primavera', 'orquidea'].includes(p.id),
       estoque: p.estoque ?? null, comemorativo: !!p.comemorativo, composicao: (p.composicao || []).map(([i, q]) => ({ insumo_id: iid(i), qtd: q })), composicao_texto: p.composicao_texto, custo_informado: p.custo_informado ?? null });
     const n = p.tipo === 'complemento' ? 1 : p.id === 'campestre' ? 1 : 3;
-    for (let k = 0; k < n; k++) db().put('photos', { id: uid('foto_'), tenant_id: t, url: demoPhotoUrl(p.estilo, k + 1), produto_id: pid(p.id), legenda: `${p.nome}${k ? ` (${k + 1})` : ''}`, origem: k === 0 ? 'iflores' : 'lojista', demo: true, usos: 0, ultimo_uso: k === 0 && r() > 0.5 ? addDays(hoje, -5) : null });
+    for (let k = 0; k < n; k++) await db().put('photos', { id: uid('foto_'), tenant_id: t, url: demoPhotoUrl(p.estilo, k + 1), produto_id: pid(p.id), legenda: `${p.nome}${k ? ` (${k + 1})` : ''}`, origem: k === 0 ? 'iflores' : 'lojista', demo: true, usos: 0, ultimo_uso: k === 0 && r() > 0.5 ? addDays(hoje, -5) : null });
   }
-  db().put('settings', { ...DEFAULT_SETTINGS, id: t, tenant_id: t, fretes: BAIRROS.map(([bairro, valor]) => ({ bairro, valor, ativo: true })) });
+  await db().put('settings', { ...DEFAULT_SETTINGS, id: t, tenant_id: t, fretes: BAIRROS.map(([bairro, valor]) => ({ bairro, valor, ativo: true })) });
 
   // histórico de 70 dias: vendas crescem, mas a cesta (margem baixa) e os descontos crescem mais;
   // na última semana o número de pedidos cai porque mais clientes desistem no pagamento.
@@ -83,43 +83,43 @@ export function seedDemo(nome = 'Floricultura Jardim Encantado') {
     const buscas = Object.fromEntries(P.filter((p) => p.busca).map((p) => [pid(p.id), Math.round((p.busca / 7) * (0.7 + r() * 0.6))]));
     const home = Math.round(visitas * (0.58 + r() * 0.08)); const categoria = Math.round(visitas * 0.22);
     const visitas_pagina = { home, categoria, produto: Math.max(0, visitas - home - categoria) };
-    db().put('dias', { id: `${t}:${data}`, tenant_id: t, data, visitas, carrinhos, checkouts, pedidos, faturamento: round2(fat - descontos), descontos, vendas, buscas, visitas_pagina });
+    await db().put('dias', { id: `${t}:${data}`, tenant_id: t, data, visitas, carrinhos, checkouts, pedidos, faturamento: round2(fat - descontos), descontos, vendas, buscas, visitas_pagina });
   }
 
   // campanhas: soma 60/dia = teto; a de rosas vende muito bem; uma anuncia produto esgotado
-  const camp = (plataforma, nome, orcamento, produtos, [gasto, imp, cliques, compras, receita], extra = {}) => db().put('campaigns', { id: uid('cmp_'), tenant_id: t, plataforma, nome, status: 'ativa', orcamento_diario: orcamento, produto_ids: produtos.map(pid), metricas: { gasto, impressoes: imp, cliques, ctr: round2((cliques / imp) * 100), compras, receita, roas: gasto ? receita / gasto : 0 }, ...extra });
-  camp('meta', 'Rosas — Conversão', 25, ['encanto', 'box'], [168, 9800, 214, 9, 1739]);
-  camp('meta', 'Girassóis — Alcance bairros', 15, ['girassois'], [102, 14200, 88, 0, 0]);
-  camp('meta', 'Lírios — Conversão', 10, ['lirios'], [64, 3900, 61, 1, 159.9]);
-  camp('google', 'Pesquisa — Cesta de café', 10, ['cesta'], [71, 1800, 66, 2, 479.8], { tipo: 'pesquisa' });
+  const camp = async (plataforma, nome, orcamento, produtos, [gasto, imp, cliques, compras, receita], extra = {}) => await db().put('campaigns', { id: uid('cmp_'), tenant_id: t, plataforma, nome, status: 'ativa', orcamento_diario: orcamento, produto_ids: produtos.map(pid), metricas: { gasto, impressoes: imp, cliques, ctr: round2((cliques / imp) * 100), compras, receita, roas: gasto ? receita / gasto : 0 }, ...extra });
+  await camp('meta', 'Rosas — Conversão', 25, ['encanto', 'box'], [168, 9800, 214, 9, 1739]);
+  await camp('meta', 'Girassóis — Alcance bairros', 15, ['girassois'], [102, 14200, 88, 0, 0]);
+  await camp('meta', 'Lírios — Conversão', 10, ['lirios'], [64, 3900, 61, 1, 159.9]);
+  await camp('google', 'Pesquisa — Cesta de café', 10, ['cesta'], [71, 1800, 66, 2, 479.8], { tipo: 'pesquisa' });
 
   // clientes e conversas
   const ano = addDays(hoje, -365 + 5);
-  salvarContato(t, { contato: '5511988887777', nome: 'Renata Alves', optin_marketing: true, ocasiao: 'aniversário da mãe', data_ocasiao: ano, ultima_compra: ano, tags: ['mães'] }, { origem: 'iflores', sincronizar: false });
-  salvarContato(t, { contato: '5511977776666', nome: 'Paulo Lima', optin_marketing: false, ocasiao: 'aniversário', data_ocasiao: ano }, { origem: 'iflores', sincronizar: false });
-  salvarContato(t, { contato: '5511966665555', nome: 'Juliana Costa' }, { origem: 'flora', sincronizar: false });
+  await salvarContato(t, { contato: '5511988887777', nome: 'Renata Alves', optin_marketing: true, ocasiao: 'aniversário da mãe', data_ocasiao: ano, ultima_compra: ano, tags: ['mães'] }, { origem: 'iflores', sincronizar: false });
+  await salvarContato(t, { contato: '5511977776666', nome: 'Paulo Lima', optin_marketing: false, ocasiao: 'aniversário', data_ocasiao: ano }, { origem: 'iflores', sincronizar: false });
+  await salvarContato(t, { contato: '5511966665555', nome: 'Juliana Costa' }, { origem: 'flora', sincronizar: false });
   const conv = { id: `${t}:whatsapp:5511966665555`, tenant_id: t, canal: 'whatsapp', contato: '5511966665555', nome: 'Juliana Costa', status: 'flora', ultima_cliente_em: new Date(Date.now() - 3 * 3600e3).toISOString(), estado: { etapa: 'escolha', itens: [{ produto_id: pid('primavera'), nome: 'Buquê Primavera', preco: 129.9, qtd: 1 }], upsell_oferecido: true } };
-  db().put('conversations', conv);
-  const m = (role, texto, minAtras) => db().put('messages', { id: uid('msg_'), tenant_id: t, conversation_id: conv.id, role, texto, em: new Date(Date.now() - minAtras * 60e3).toISOString() });
-  m('cliente', 'Oi! Queria um buquê para a minha professora, até uns 150', 185);
-  m('flora', 'Olá! Aqui é a Flora, da Floricultura Jardim Encantado. Separei estas opções até R$ 150,00:\n1. Buquê Primavera: R$ 129,90\n2. Mini Buquê Campestre: R$ 79,90\n3. Orquídea Phalaenopsis Branca: R$ 139,90\n\nQual delas você prefere?', 184);
-  m('cliente', 'O primeiro', 181);
-  m('flora', 'Ótima escolha! Buquê Primavera por R$ 129,90.\n\nQuer incluir algum complemento?\n• Cartão personalizado: R$ 9,90\n• Chocolates Ferrero Rocher (8 un.): R$ 39,90\n• Pelúcia Urso 25 cm: R$ 59,90\n(ou responda "não")', 180);
+  await db().put('conversations', conv);
+  const m = async (role, texto, minAtras) => await db().put('messages', { id: uid('msg_'), tenant_id: t, conversation_id: conv.id, role, texto, em: new Date(Date.now() - minAtras * 60e3).toISOString() });
+  await m('cliente', 'Oi! Queria um buquê para a minha professora, até uns 150', 185);
+  await m('flora', 'Olá! Aqui é a Flora, da Floricultura Jardim Encantado. Separei estas opções até R$ 150,00:\n1. Buquê Primavera: R$ 129,90\n2. Mini Buquê Campestre: R$ 79,90\n3. Orquídea Phalaenopsis Branca: R$ 139,90\n\nQual delas você prefere?', 184);
+  await m('cliente', 'O primeiro', 181);
+  await m('flora', 'Ótima escolha! Buquê Primavera por R$ 129,90.\n\nQuer incluir algum complemento?\n• Cartão personalizado: R$ 9,90\n• Chocolates Ferrero Rocher (8 un.): R$ 39,90\n• Pelúcia Urso 25 cm: R$ 59,90\n(ou responda "não")', 180);
 
   for (const [tema, total, ex] of [['entrega', 14, 'Vocês entregam hoje ainda?'], ['frete', 9, 'Quanto fica o frete para Pinheiros?'], ['pagamento', 6, 'Aceita Pix?'], ['horário da loja', 4, 'Até que horas vocês abrem no sábado?'], ['troca e garantia', 3, 'Quanto tempo as rosas duram?']]) {
-    db().put('perguntas', { id: `${t}:${tema}`, tenant_id: t, tema, total, exemplos: [ex] });
+    await db().put('perguntas', { id: `${t}:${tema}`, tenant_id: t, tema, total, exemplos: [ex] });
   }
   // pedidos: produção de hoje/amanhã, um pagamento parado há 5 h e um entregue ontem (pós-venda)
   const clientes = [['5511981112222', 'Carla Mendes'], ['5511982223333', 'Bruno Rocha'], ['5511983334444', 'Ana Paula Reis'], ['5511984445555', 'Diego Martins'], ['5511985556666', 'Sofia Lima']];
   const pedidosSeed = [['encanto', hoje, 'pago', 1], ['orquidea', hoje, 'em_producao', 2], ['box', addDays(hoje, 1), 'pago', 3], ['primavera', addDays(hoje, 1), 'aguardando_pagamento', 5], ['girassois', addDays(hoje, -1), 'entregue', 26]];
-  pedidosSeed.forEach(([k, data, st, horasAtras], i) => {
+  for (const [i, [k, data, st, horasAtras]] of pedidosSeed.entries()) {
     const p = P.find((x) => x.id === k); const [tel, nomeC] = clientes[i];
     const criado = new Date(Date.now() - horasAtras * 3600e3).toISOString();
-    db().put('orders', { id: uid('ped_'), tenant_id: t, numero: 1201 + i, contato: tel, canal: 'whatsapp', comprador: nomeC, itens: [{ produto_id: pid(k), nome: p.nome, preco: p.preco, qtd: 1 }], modalidade: 'entrega', data, janela: '12h-15h', bairro: 'Moema', frete: 15, subtotal: p.preco, total: p.preco + 15, status: st, pagamento: { status: st === 'aguardando_pagamento' ? 'pendente' : 'confirmado', link: `https://pagar.iflores.app.br/p/demo${1201 + i}` }, origem: 'site', created_at: criado, ...(st === 'entregue' ? { entregue_em: new Date(Date.now() - 22 * 3600e3).toISOString() } : {}) });
-    salvarContato(t, { contato: tel, nome: nomeC, optin_marketing: i % 2 === 0 }, { origem: 'iflores', sincronizar: false });
-  });
+    await db().put('orders', { id: uid('ped_'), tenant_id: t, numero: 1201 + i, contato: tel, canal: 'whatsapp', comprador: nomeC, itens: [{ produto_id: pid(k), nome: p.nome, preco: p.preco, qtd: 1 }], modalidade: 'entrega', data, janela: '12h-15h', bairro: 'Moema', frete: 15, subtotal: p.preco, total: p.preco + 15, status: st, pagamento: { status: st === 'aguardando_pagamento' ? 'pendente' : 'confirmado', link: `https://pagar.iflores.app.br/p/demo${1201 + i}` }, origem: 'site', created_at: criado, ...(st === 'entregue' ? { entregue_em: new Date(Date.now() - 22 * 3600e3).toISOString() } : {}) });
+    await salvarContato(t, { contato: tel, nome: nomeC, optin_marketing: i % 2 === 0 }, { origem: 'iflores', sincronizar: false });
+  }
   // cliente que autorizou marketing e não compra há 4 meses
-  salvarContato(t, { contato: '5511986667777', nome: 'Marcos Tavares', optin_marketing: true, ultima_compra: addDays(hoje, -120), tags: ['corporativo'] }, { origem: 'iflores', sincronizar: false });
-  for (const c of db().list('customers', t)) { if (!c.etapa) recalcular(t, c.contato); }
+  await salvarContato(t, { contato: '5511986667777', nome: 'Marcos Tavares', optin_marketing: true, ultima_compra: addDays(hoje, -120), tags: ['corporativo'] }, { origem: 'iflores', sincronizar: false });
+  for (const c of await db().list('customers', t)) { if (!c.etapa) await recalcular(t, c.contato); }
   return t;
 }

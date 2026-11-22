@@ -23,7 +23,7 @@ const devido = (k, ms) => { const t = ultimo.get(k) || 0; if (Date.now() - t < m
 export async function rotinas(tenantId, { forcar = false } = {}) {
   const H = 3600e3; const feitos = [];
   const run = async (nome, agente, ms, fn) => {
-    if ((agente && !active(tenantId, agente)) || !(forcar || devido(`${tenantId}:${nome}`, ms))) return;
+    if ((agente && !(await active(tenantId, agente))) || !(forcar || devido(`${tenantId}:${nome}`, ms))) return;
     try { await fn(); feitos.push(nome); } catch (e) { log(tenantId, agente || 'alex', `Erro na rotina ${nome}: ${e.message}`, { level: 'error' }); }
   };
   await run('automacoes', null, 10 * 60e3, () => executarAutomacoes(tenantId));
@@ -33,7 +33,7 @@ export async function rotinas(tenantId, { forcar = false } = {}) {
   await run('caio', 'caio', 6 * H, () => caio.analisar(tenantId));
   await run('alex', 'alex', 24 * H, async () => {
     const r = await alex.rotina(tenantId);
-    if (r) await enviarResumoDono(tenantId, r.resumo.texto, getConfig(tenantId, 'alex').resumo_diario?.whatsapp_dono);
+    if (r) await enviarResumoDono(tenantId, r.resumo.texto, (await getConfig(tenantId, 'alex')).resumo_diario?.whatsapp_dono);
   });
   return feitos;
 }

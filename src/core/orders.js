@@ -8,54 +8,55 @@ import { enfileirar } from './outbox.js';
 import { salvarContato, recalcular, normTel } from './crm.js';
 
 export const getOrder = (id) => db().get('orders', id);
-export const listOrders = (tenantId, filter) => db().list('orders', tenantId, filter).sort((a, b) => (a.created_at < b.created_at ? 1 : -1));
+export const listOrders = async (tenantId, filter) => (await db().list('orders', tenantId, filter)).sort((a, b) => (a.created_at < b.created_at ? 1 : -1));
 
-function nextNumero(tenantId) {
-  const n = db().list('orders', tenantId).reduce((m, o) => Math.max(m, o.numero || 0), 1000);
+async function nextNumero(tenantId) {
+  const n = (await db().list('orders', tenantId)).reduce((m, o) => Math.max(m, o.numero || 0), 1000);
   return n + 1;
 }
 
 /** Pedido aberto do mesmo contato com os mesmos itens e data (evita duplicidade). */
-export function pedidoEmAberto(tenantId, contato, { itens, data } = {}) {
+export async function pedidoEmAberto(tenantId, contato, { itens, data } = {}) {
   const chave = (it) => (it || []).map((i) => `${i.produto_id}x${i.qtd}`).sort().join(',');
-  return listOrders(tenantId, (o) => o.contato === contato && o.status === 'aguardando_pagamento' && (!itens || chave(o.itens) === chave(itens)) && (!data || o.data === data))[0] || null;
+  const lista = await listOrders(tenantId, (o) => o.contato === contato && o.status === 'aguardando_pagamento' && (!itens || chave(o.itens) === chave(itens)) && (!data || o.data === data));
+  return lista[0] || null;
 }
 
-export function criarPedido(tenantId, dados) {
-  const existente = pedidoEmAberto(tenantId, dados.contato, dados);
+export async function criarPedido(tenantId, dados) {
+  const existente = await pedidoEmAberto(tenantId, dados.contato, dados);
   if (existente) return { ...existente, ja_existia: true };
   const subtotal = dados.itens.reduce((s, i) => s + i.preco * i.qtd, 0);
-  const id = uid('ped_'); const numero = nextNumero(tenantId);
-  const order = db().put('orders', {
+  const id = uid('ped_'); const numero = await nextNumero(tenantId);
+  const order = await db().put('orders', {
     id, tenant_id: tenantId, numero, ...dados,
     subtotal: round2(subtotal), total: round2(subtotal + (dados.frete || 0)),
     status: 'aguardando_pagamento',
     pagamento: { status: 'pendente', link: `https://pagar.iflores.app.br/p/${id}`, enviado_em: null },
     created_at: now(),
   });
-  upsertCliente(tenantId, { contato: dados.contato, nome: dados.comprador, ocasiao: dados.ocasiao, data_ocasiao: dados.data });
-  enfileirar(tenantId, 'pedido.criar', { order_id: id }, `pedido:${id}`);
+  await upsertCliente(tenantId, { contato: dados.contato, nome: dados.comprador, ocasiao: dados.ocasiao, data_ocasiao: dados.data });
+  await enfileirar(tenantId, 'pedido.criar', { order_id: id }, `pedido:${id}`);
   return order;
 }
 
-export function confirmarPagamento(tenantId, orderId, origem = 'sistema') {
-  const o = getOrder(orderId);
+export async function confirmarPagamento(tenantId, orderId, origem = 'sistema') {
+  const o = await getOrder(orderId);
   if (!o || o.tenant_id !== tenantId) throw new Error('Pedido não encontrado');
   if (o.pagamento.status === 'confirmado') return o;
-  const upd = db().put('orders', { ...o, status: 'pago', pagamento: { ...o.pagamento, status: 'confirmado', confirmado_em: now(), origem } });
-  registrarVendaNoDia(tenantId, upd);
-  recalcular(tenantId, o.contato);
+  const upd = await db().put('orders', { ...o, status: 'pago', pagamento: { ...o.pagamento, status: 'confirmado', confirmado_em: now(), origem } });
+  await registrarVendaNoDia(tenantId, upd);
+  await recalcular(tenantId, o.contato);
   publish(tenantId, 'pedido.pago', { order_id: o.id });
   log(tenantId, 'flora', `Pagamento do pedido #${o.numero} confirmado pelo ${origem === 'sistema' ? 'sistema de pagamento' : origem}`, { type: 'pagamento', kind: 'info', level: 'success', data: { order_id: o.id } });
   return upd;
 }
 
-function registrarVendaNoDia(tenantId, o) {
+async function registrarVendaNoDia(tenantId, o) {
   const data = localDate(); const id = `${tenantId}:${data}`;
-  const d = db().get('dias', id) || { id, tenant_id: tenantId, data, visitas: 0, carrinhos: 0, checkouts: 0, pedidos: 0, faturamento: 0, vendas: {}, buscas: {}, descontos: 0 };
+  const d = (await db().get('dias', id)) || { id, tenant_id: tenantId, data, visitas: 0, carrinhos: 0, checkouts: 0, pedidos: 0, faturamento: 0, vendas: {}, buscas: {}, descontos: 0 };
   d.pedidos += 1; d.faturamento = round2(d.faturamento + o.total);
   for (const i of o.itens) d.vendas[i.produto_id] = (d.vendas[i.produto_id] || 0) + i.qtd;
-  db().put('dias', d);
+  await db().put('dias', d);
 }
 
 /** Contato do CRM a partir de uma conversa ou pedido (não sobrescreve dados já preenchidos com vazio). */
@@ -63,18 +64,18 @@ export function upsertCliente(tenantId, { contato, nome, ...rest }) {
   return salvarContato(tenantId, { contato, ...(nome ? { nome } : {}), ...Object.fromEntries(Object.entries(rest).filter(([, v]) => v != null)) }, { origem: 'flora' });
 }
 
-export function mudarStatus(tenantId, orderId, status) {
-  const o = getOrder(orderId); if (!o || o.tenant_id !== tenantId) throw Object.assign(new Error('Pedido não encontrado'), { status: 404 });
-  const upd = db().put('orders', { ...o, status, [`${status}_em`]: now() });
+export async function mudarStatus(tenantId, orderId, status) {
+  const o = await getOrder(orderId); if (!o || o.tenant_id !== tenantId) throw Object.assign(new Error('Pedido não encontrado'), { status: 404 });
+  const upd = await db().put('orders', { ...o, status, [`${status}_em`]: now() });
   publish(tenantId, 'pedido.status', { order_id: o.id, status });
-  recalcular(tenantId, o.contato);
+  await recalcular(tenantId, o.contato);
   return upd;
 }
 export { normTel };
 
 // ---------------- indicadores ----------------
-export function periodo(tenantId, ini, fim) {
-  const rows = db().list('dias', tenantId, (d) => d.data >= ini && d.data <= fim);
+export async function periodo(tenantId, ini, fim) {
+  const rows = await db().list('dias', tenantId, (d) => d.data >= ini && d.data <= fim);
   const s = rows.reduce((a, r) => {
     a.visitas += r.visitas; a.carrinhos += r.carrinhos; a.checkouts += r.checkouts; a.pedidos += r.pedidos; a.faturamento += r.faturamento;
     for (const [k, v] of Object.entries(r.vendas || {})) a.vendas[k] = (a.vendas[k] || 0) + v;
@@ -85,9 +86,9 @@ export function periodo(tenantId, ini, fim) {
 }
 
 /** Compara a semana atual com a anterior (períodos equivalentes de 7 dias). */
-export function compararSemanas(tenantId, hoje = localDate()) {
+export async function compararSemanas(tenantId, hoje = localDate()) {
   const fim = addDays(hoje, -1);
-  return { atual: periodo(tenantId, addDays(fim, -6), fim), anterior: periodo(tenantId, addDays(fim, -13), addDays(fim, -7)) };
+  return { atual: await periodo(tenantId, addDays(fim, -6), fim), anterior: await periodo(tenantId, addDays(fim, -13), addDays(fim, -7)) };
 }
 
 export function funil(p) {
@@ -96,10 +97,12 @@ export function funil(p) {
 }
 
 /** Registra uma pergunta feita à Flora (alimenta a Mari e o Alex). */
-export function registrarPergunta(tenantId, tema, exemplo) {
+export async function registrarPergunta(tenantId, tema, exemplo) {
   const id = `${tenantId}:${norm(tema)}`;
-  const q = db().get('perguntas', id) || { id, tenant_id: tenantId, tema, total: 0, exemplos: [] };
+  const q = (await db().get('perguntas', id)) || { id, tenant_id: tenantId, tema, total: 0, exemplos: [] };
   q.total += 1; if (exemplo && q.exemplos.length < 5 && !q.exemplos.includes(exemplo)) q.exemplos.push(exemplo);
-  db().put('perguntas', q);
+  await db().put('perguntas', q);
 }
-export const topPerguntas = (tenantId, n = 5) => db().list('perguntas', tenantId).sort((a, b) => b.total - a.total).slice(0, n);
+export async function topPerguntas(tenantId, n = 5) {
+  return (await db().list('perguntas', tenantId)).sort((a, b) => b.total - a.total).slice(0, n);
+}

@@ -15,11 +15,10 @@ import { localTime } from '../src/core/util.js';
 delete process.env.ANTHROPIC_API_KEY;
 let t; let srv; let recebido; let falhar = 0;
 const api = (method, path, body) => comLoja(t, () => handle({ method, path, body, tenantId: t })).then((r) => r.body);
-// um horário comercial próximo (as mensagens de marketing respeitam o horário de silêncio)
-function horarioComercial() { let d = new Date(); for (let i = 0; i < 48; i++) { const h = localTime(d); if (h >= '10:00' && h < '19:00') return d; d = new Date(d.getTime() + 30 * 60e3); } return d; }
+const primeiro = async (p) => (await p)[0];
 
 before(async () => {
-  ativarContexto(); init(createMemoryStore()); t = seedDemo(); setHired(t, 'flora', true);
+  ativarContexto(); init(createMemoryStore()); t = await seedDemo(); await setHired(t, 'flora', true);
   recebido = { clientes: [], pedidos: [], alteracoes: [] };
   srv = http.createServer((req, res) => {
     let b = ''; req.on('data', (c) => { b += c; }); req.on('end', () => {
@@ -49,16 +48,16 @@ test('CRM: contatos com etapa do funil e linha do tempo', async () => {
 
 test('CRM: sem conexão, nada se perde; ao conectar, recebe da iFlores e envia a fila', async () => {
   await api('POST', '/atendimento/mensagem', { canal: 'simulador', contato: '5511955550000', nome: 'Rita', texto: 'oi' });
-  assert.ok(crm.estadoSync(t).fila_pendente > 0, 'contato novo aguarda na fila');
-  const tn = db().get('tenants', t);
-  db().put('tenants', { ...tn, iflores: { base_url: `http://127.0.0.1:${srv.address().port}`, token: 'tok-loja', connected: true } });
+  assert.ok((await crm.estadoSync(t)).fila_pendente > 0, 'contato novo aguarda na fila');
+  const tn = await db().get('tenants', t);
+  await db().put('tenants', { ...tn, iflores: { base_url: `http://127.0.0.1:${srv.address().port}`, token: 'tok-loja', connected: true } });
   await api('POST', '/crm/sincronizar');
-  const helena = crm.getContato(t, '5511970001234');
+  const helena = await crm.getContato(t, '5511970001234');
   assert.equal(helena.nome, 'Helena Prado'); assert.equal(helena.external_id, 'C9');
   assert.equal(helena.optin_marketing, true);
-  assert.equal(db().list('orders', t, (o) => o.external_id === 'P77').length, 1);
+  assert.equal((await db().list('orders', t, (o) => o.external_id === 'P77')).length, 1);
   await api('POST', '/crm/sincronizar');
-  assert.equal(db().list('orders', t, (o) => o.external_id === 'P77').length, 1, 'sincronizar de novo não duplica');
+  assert.equal((await db().list('orders', t, (o) => o.external_id === 'P77')).length, 1, 'sincronizar de novo não duplica');
   assert.ok(recebido.clientes.some((c) => c.telefone === '5511955550000'), 'contato criado pela Flora chegou na iFlores');
   assert.ok(recebido.clientes.length > 0);
 });
@@ -68,7 +67,7 @@ test('CRM: iFlores fora do ar → nova tentativa depois, sem perder o envio', as
   falhar = 1;
   const r1 = await comLoja(t, () => crm.processarFila(t));
   assert.equal(r1.enviados, 0);
-  const item = db().list('outbox', t, (o) => o.chave === 'cliente:5511955550000' && o.status === 'pendente')[0];
+  const item = await primeiro((await db().list('outbox', t, (o) => o.chave === 'cliente:5511955550000' && o.status === 'pendente')));
   assert.equal(item.tentativas, 1); assert.ok(item.proxima_em > new Date().toISOString());
   const r2 = await comLoja(t, () => crm.processarFila(t, new Date(Date.now() + 10 * 60e3)));
   assert.ok(r2.enviados >= 1);
@@ -76,35 +75,39 @@ test('CRM: iFlores fora do ar → nova tentativa depois, sem perder o envio', as
 });
 
 test('Automações: enviam uma vez, respeitam consentimento e quem está com atendente humano', async () => {
-  const agora = horarioComercial();
+  const agora = new Date();
   await comLoja(t, () => aut.executarAutomacoes(t, agora));
   await comLoja(t, () => aut.executarAutomacoes(t, agora));
-  const ex = aut.listarExecucoes(t, 300);
+  const ex = await aut.listarExecucoes(t, 300);
   const por = (m) => ex.filter((e) => e.modelo === m);
   assert.equal(por('pagamento_pendente').filter((e) => e.status === 'enviado').length, 1, 'lembrete de pagamento só uma vez');
   assert.equal(por('pos_venda').filter((e) => e.status === 'enviado').length, 1);
-  assert.ok(por('data_especial').some((e) => e.status === 'enviado' && /Renata/.test(e.texto)));
+  // marketing só entre 8h e 21h: fora desse horário a Renata não recebe agora, e a tentativa fica para a próxima rodada
+  const diurno = localTime(agora) >= '08:00' && localTime(agora) < '21:00';
+  const renataEnviada = por('data_especial').some((e) => e.status === 'enviado' && /Renata/.test(e.texto));
+  assert.equal(renataEnviada, diurno, diurno ? 'lembrete de data especial enviado em horário comercial' : 'nada de marketing fora do horário comercial');
   assert.ok(por('data_especial').some((e) => e.status === 'pulado' && /consentimento/.test(e.motivo)), 'sem opt-in não recebe marketing');
   assert.ok(por('conversa_parada').some((e) => e.status === 'enviado'));
   assert.ok(por('estoque_baixo').length >= 1);
   // pagamento confirmado → mensagem automática
-  const o = db().list('orders', t, (x) => x.status === 'aguardando_pagamento')[0];
+  const o = await primeiro((await db().list('orders', t)).filter((x) => x.status === 'aguardando_pagamento'));
   await api('POST', '/eventos', { id: 'e1', type: 'payment.confirmed', data: { order_id: o.id } });
   await new Promise((r) => setTimeout(r, 10));
-  assert.ok(aut.listarExecucoes(t).some((e) => e.modelo === 'pagamento_confirmado' && e.status === 'enviado'));
+  assert.ok((await aut.listarExecucoes(t)).some((e) => e.modelo === 'pagamento_confirmado' && e.status === 'enviado'));
   // desligar uma automação para a loja
   await api('PUT', '/automacoes/pos_venda', { ativo: false });
   assert.equal((await api('GET', '/automacoes')).find((a) => a.id === 'pos_venda').ativo, false);
 });
 
 test('Automações não falam com cliente que está com uma pessoa da loja', async () => {
-  const conv = db().list('conversations', t, (c) => c.nome === 'Juliana Costa')[0];
+  const conv = await primeiro((await db().list('conversations', t)).filter((c) => c.nome === 'Juliana Costa'));
   const marco = new Date().toISOString();
   await new Promise((r) => setTimeout(r, 5));
   await api('POST', `/atendimento/conversas/${encodeURIComponent(conv.id)}/assumir`, { texto: 'Oi Juliana, aqui é a Ana' });
-  db().put('conversations', { ...db().get('conversations', conv.id), ultima_cliente_em: new Date(Date.now() - 3 * 3600e3).toISOString() });
-  await comLoja(t, () => aut.executarAutomacoes(t, horarioComercial()));
-  assert.ok(aut.listarExecucoes(t, 300).some((e) => e.modelo === 'conversa_parada' && e.status === 'pulado' && /pessoa/.test(e.motivo)));
-  const enviadasDepois = db().list('messages', t, (m) => m.conversation_id === conv.id && m.role === 'flora' && m.em > marco);
+  const atual = await db().get('conversations', conv.id);
+  await db().put('conversations', { ...atual, ultima_cliente_em: new Date(Date.now() - 3 * 3600e3).toISOString() });
+  await comLoja(t, () => aut.executarAutomacoes(t, new Date()));
+  assert.ok((await aut.listarExecucoes(t, 300)).some((e) => e.modelo === 'conversa_parada' && e.status === 'pulado' && /pessoa/.test(e.motivo)));
+  const enviadasDepois = (await db().list('messages', t)).filter((m) => m.conversation_id === conv.id && m.role === 'flora' && m.em > marco);
   assert.equal(enviadasDepois.length, 0);
 });

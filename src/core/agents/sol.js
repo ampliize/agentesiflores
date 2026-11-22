@@ -58,22 +58,23 @@ function textoProduto(a) {
 • Resultado estimado após rateio: ${brl(a.resultado)} (${pct(a.resultado_pct)})${premissas(a)}`;
 }
 
-function interpretar(tenantId, texto, contexto) {
+async function interpretar(tenantId, texto, contexto) {
   const t = norm(texto);
   if (/(sobrando menos|sobra menos|sobrou menos|vendendo mais|lucro caiu|dinheiro nao sobra|nao sobra)/.test(t)) return { tipo: 'diagnostico' };
   const desc = t.match(/(\d{1,2}(?:[.,]\d)?)\s*(?:%|por cento)/);
   if (/desconto|promoc/.test(t)) {
-    const ps = acharProduto(tenantId, texto);
-    const produto = ps.length === 1 ? ps[0] : contexto?.produto_id ? listProducts(tenantId).find((p) => p.id === contexto.produto_id) : null;
+    const ps = await acharProduto(tenantId, texto);
+    const todos = await listProducts(tenantId);
+    const produto = ps.length === 1 ? ps[0] : contexto?.produto_id ? todos.find((p) => p.id === contexto.produto_id) : null;
     const valor = parseValor(t.replace(/\d{1,2}\s*%/, ''));
     if (!desc) return { pergunta: `De quanto seria o desconto${produto ? ` no ${produto.nome}` : ''}? Ex.: "10%".`, contexto: { produto_id: produto?.id } };
     if (!produto && !contexto?.custo) return { pergunta: `Em qual produto seria o desconto de ${desc[1]}%?`, contexto: { desconto: Number(desc[1].replace(',', '.')) } };
     return { tipo: 'desconto', produto, descontoPct: Number(desc[1].replace(',', '.')), preco: produto ? undefined : contexto?.preco, cmv: produto ? undefined : contexto?.custo, valor };
   }
-  if (contexto?.desconto && acharProduto(tenantId, texto).length === 1) return { tipo: 'desconto', produto: acharProduto(tenantId, texto)[0], descontoPct: contexto.desconto };
+  if (contexto?.desconto && (await acharProduto(tenantId, texto)).length === 1) return { tipo: 'desconto', produto: (await acharProduto(tenantId, texto))[0], descontoPct: contexto.desconto };
   if (/(por quanto|que preco|qual preco|quanto (?:devo|posso) cobrar|quanto cobrar|precificar|preco de venda)/.test(t)) {
     const custo = parseValor(t);
-    const ps = acharProduto(tenantId, texto);
+    const ps = await acharProduto(tenantId, texto);
     if (custo == null && ps.length === 1) return { tipo: 'produto', produto: ps[0] };
     if (custo == null) return { pergunta: 'Quanto custa para produzir? Some flores, embalagem, laço e cartão.' };
     const m = t.match(/margem de (\d{1,2})/);
@@ -81,7 +82,7 @@ function interpretar(tenantId, texto, contexto) {
   }
   if (/(margem|quanto deixa|quanto sobra|lucro do|custo do|custo da)/.test(t)) {
     if (/(baixa|menor|pior|ruim|todos|lista)/.test(t)) return { tipo: 'margens' };
-    const ps = acharProduto(tenantId, texto);
+    const ps = await acharProduto(tenantId, texto);
     if (ps.length === 1) return { tipo: 'produto', produto: ps[0] };
     if (ps.length > 1) return { pergunta: `Qual deles: ${ps.map((p) => p.nome).join(' ou ')}?` };
     return { tipo: 'margens' };
@@ -94,8 +95,8 @@ const AJUDA = 'Pode me perguntar, por exemplo:\n• "Meu buquê custa R$50 para 
 
 export function conversar(tenantId, texto) { return serial(`${tenantId}:chat:sol`, () => conversarAgora(tenantId, texto)); }
 async function conversarAgora(tenantId, texto) {
-  if (!active(tenantId, 'sol')) return { texto: 'A Sol não está contratada ou está pausada nesta loja.' };
-  const chat = getChat(tenantId, 'sol');
+  if (!(await active(tenantId, 'sol'))) return { texto: 'A Sol não está contratada ou está pausada nesta loja.' };
+  const chat = await getChat(tenantId, 'sol');
   chat.mensagens.push({ role: 'user', texto, em: now() });
   const resposta = await working(tenantId, 'sol', 'Fazendo as contas', async () => {
     if (aiEnabled()) {
@@ -103,34 +104,35 @@ async function conversarAgora(tenantId, texto) {
       const obj = { type: 'object', additionalProperties: false };
       const tools = [
         { name: 'preco_sugerido', description: 'Preço mínimo, de equilíbrio e sugerido para um custo de produção.', input_schema: { ...obj, required: ['custo', 'margem_alvo_pct'], properties: { custo: { type: 'number' }, margem_alvo_pct: { type: ['number', 'null'] } } }, run: (i) => precoSugerido(tenantId, { custo: i.custo, margemAlvoPct: i.margem_alvo_pct ?? undefined }) },
-        { name: 'impacto_desconto', description: 'Efeito de um desconto em um produto do catálogo.', input_schema: { ...obj, required: ['produto', 'desconto_pct'], properties: { produto: { type: 'string' }, desconto_pct: { type: 'number' } } }, run: (i) => { const ps = acharProduto(tenantId, i.produto); return ps.length === 1 ? impactoDesconto(tenantId, { produto: ps[0], descontoPct: i.desconto_pct }) : { erro: 'produto ambíguo ou não encontrado', candidatos: ps.map((p) => p.nome) }; } },
-        { name: 'analisar_produto', description: 'Custo, margem de contribuição, rateio e resultado de um produto.', input_schema: { ...obj, required: ['produto'], properties: { produto: { type: 'string' } } }, run: (i) => { const ps = acharProduto(tenantId, i.produto); return ps.length === 1 ? analisarProduto(tenantId, ps[0]) : { erro: 'produto ambíguo ou não encontrado', candidatos: ps.map((p) => p.nome) }; } },
+        { name: 'impacto_desconto', description: 'Efeito de um desconto em um produto do catálogo.', input_schema: { ...obj, required: ['produto', 'desconto_pct'], properties: { produto: { type: 'string' }, desconto_pct: { type: 'number' } } }, run: async (i) => { const ps = await acharProduto(tenantId, i.produto); return ps.length === 1 ? impactoDesconto(tenantId, { produto: ps[0], descontoPct: i.desconto_pct }) : { erro: 'produto ambíguo ou não encontrado', candidatos: ps.map((p) => p.nome) }; } },
+        { name: 'analisar_produto', description: 'Custo, margem de contribuição, rateio e resultado de um produto.', input_schema: { ...obj, required: ['produto'], properties: { produto: { type: 'string' } } }, run: async (i) => { const ps = await acharProduto(tenantId, i.produto); return ps.length === 1 ? analisarProduto(tenantId, ps[0]) : { erro: 'produto ambíguo ou não encontrado', candidatos: ps.map((p) => p.nome) }; } },
         { name: 'margens', description: 'Margens de todos os produtos.', input_schema: { ...obj, required: [], properties: {} }, run: () => margens(tenantId) },
         { name: 'diagnostico_margem', description: 'Compara os últimos 30 dias com os 30 anteriores e explica por que sobra menos dinheiro.', input_schema: { ...obj, required: [], properties: {} }, run: () => diagnosticoMargem(tenantId) },
       ];
       const r = await runToolLoop({ system: `Você é a Sol, especialista em custos e precificação de floriculturas. Explique em linguagem simples, mostre sempre as premissas, separe margem de contribuição de custos fixos e nunca chame o resultado estimado de um produto de lucro líquido da loja. Se faltar dado, diga que o cálculo é parcial e peça o que falta. Use as ferramentas para todos os números.`, messages: history, tools, effort: 'medium' });
       return { texto: r.text };
     }
-    const it = interpretar(tenantId, texto, chat.contexto);
+    const it = await interpretar(tenantId, texto, chat.contexto);
     chat.contexto = it.contexto || (it.produto ? { produto_id: it.produto.id } : it.tipo === 'preco' ? { custo: it.custo } : chat.contexto);
     if (it.pergunta) return { texto: it.pergunta };
     if (it.ajuda) return { texto: AJUDA };
-    if (it.tipo === 'preco') { const r = precoSugerido(tenantId, { custo: it.custo, margemAlvoPct: it.margem }); chat.contexto = { custo: it.custo, preco: r.sugerido_arredondado }; return { texto: textoPreco(r), dados: r }; }
-    if (it.tipo === 'desconto') { const d = impactoDesconto(tenantId, { produto: it.produto, descontoPct: it.descontoPct, preco: it.preco, cmv: it.cmv }); return { texto: textoDesconto(d), dados: d }; }
-    if (it.tipo === 'diagnostico') return { texto: textoDiagnostico(diagnosticoMargem(tenantId)) };
-    if (it.tipo === 'produto') return { texto: textoProduto(analisarProduto(tenantId, it.produto)) };
+    if (it.tipo === 'preco') { const r = await precoSugerido(tenantId, { custo: it.custo, margemAlvoPct: it.margem }); chat.contexto = { custo: it.custo, preco: r.sugerido_arredondado }; return { texto: textoPreco(r), dados: r }; }
+    if (it.tipo === 'desconto') { const d = await impactoDesconto(tenantId, { produto: it.produto, descontoPct: it.descontoPct, preco: it.preco, cmv: it.cmv }); return { texto: textoDesconto(d), dados: d }; }
+    if (it.tipo === 'diagnostico') return { texto: textoDiagnostico(await diagnosticoMargem(tenantId)) };
+    if (it.tipo === 'produto') return { texto: textoProduto(await analisarProduto(tenantId, it.produto)) };
     if (it.tipo === 'margens') {
-      const ms = margens(tenantId).filter((a) => a.mc_pct != null).sort((a, b) => a.mc_pct - b.mc_pct);
-      const sem = margens(tenantId).filter((a) => a.cmv == null);
+      const todas = await margens(tenantId);
+      const ms = todas.filter((a) => a.mc_pct != null).sort((a, b) => a.mc_pct - b.mc_pct);
+      const sem = todas.filter((a) => a.cmv == null);
       return { texto: `Margem de contribuição por produto (menor para maior):\n${ms.map((a) => `• ${a.produto}: ${brl(a.mc)} (${pct(a.mc_pct)})${a.mc_pct < 0.35 ? ' ⚠️ baixa' : ''}`).join('\n')}${sem.length ? `\n\nSem custo cadastrado: ${sem.map((a) => a.produto).join(', ')}.` : ''}` };
     }
     if (it.tipo === 'resumo') {
-      const r = resumoPeriodo(tenantId); const P = params(tenantId);
+      const r = await resumoPeriodo(tenantId); const P = await params(tenantId);
       return { texto: `Últimos 30 dias: faturamento ${brl(r.faturamento)}, margem de contribuição ${brl(r.mc)} (${pct(r.mc_pct)}), custos fixos ${brl(r.custos_fixos)} (${brl(P.fixos)}/mês), resultado estimado ${brl(r.resultado)}. Estimativa a partir das fichas de custo e das vendas registradas.` };
     }
     return { texto: AJUDA };
   });
   chat.mensagens.push({ role: 'assistant', texto: resposta.texto, em: now() });
-  saveChat(chat);
+  await saveChat(chat);
   return resposta;
 }

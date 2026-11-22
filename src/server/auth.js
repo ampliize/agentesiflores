@@ -5,14 +5,18 @@ import { db } from '../core/store.js';
 const SECRET = () => process.env.APP_SECRET || 'dev-secret-troque';
 const sha = (s) => crypto.createHash('sha256').update(s).digest('hex');
 
-export function novaChave(tenantId) {
+export async function novaChave(tenantId) {
   const key = `ifa_${crypto.randomBytes(24).toString('base64url')}`;
-  db().put('apikeys', { id: sha(key), tenant_id: tenantId });
-  const t = db().get('tenants', tenantId); db().put('tenants', { ...t, api_key_prefix: key.slice(0, 10) });
-  for (const k of db().list('apikeys', tenantId)) if (k.id !== sha(key)) db().del('apikeys', k.id);
+  await db().put('apikeys', { id: sha(key), tenant_id: tenantId });
+  const t = await db().get('tenants', tenantId);
+  await db().put('tenants', { ...t, api_key_prefix: key.slice(0, 10) });
+  for (const k of await db().list('apikeys', tenantId)) if (k.id !== sha(key)) await db().del('apikeys', k.id);
   return key;
 }
-export const tenantPorChave = (key) => (key?.startsWith('ifa_') ? db().get('apikeys', sha(key))?.tenant_id || null : null);
+export async function tenantPorChave(key) {
+  if (!key?.startsWith('ifa_')) return null;
+  return (await db().get('apikeys', sha(key)))?.tenant_id || null;
+}
 
 export function assinarSessao(tenantId, ttl = 8 * 3600, extra = {}) {
   const payload = Buffer.from(JSON.stringify({ t: tenantId, exp: Math.floor(Date.now() / 1000) + ttl, ...extra })).toString('base64url');

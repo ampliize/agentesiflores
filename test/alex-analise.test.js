@@ -14,13 +14,14 @@ delete process.env.ANTHROPIC_API_KEY;
 let A; let B;
 const em = (t, fn) => comLoja(t, fn);
 const hoje = localDate();
+const primeiro = async (p) => (await p)[0];
 
-before(() => { ativarContexto(); init(createMemoryStore()); A = seedDemo('Loja A'); B = seedDemo('Loja B'); });
+before(async () => { ativarContexto(); init(createMemoryStore()); A = await seedDemo('Loja A'); B = await seedDemo('Loja B'); });
 
-test('decomposição: visitas × taxa de compra × ticket somam exatamente a variação do faturamento', () => {
-  em(A, () => {
+test('decomposição: visitas × taxa de compra × ticket somam exatamente a variação do faturamento', async () => {
+  await em(A, async () => {
     const fim = addDays(hoje, -1);
-    const a = AN.janela(A, fim, 7); const b = AN.janela(A, addDays(fim, -7), 7);
+    const a = await AN.janela(A, fim, 7); const b = await AN.janela(A, addDays(fim, -7), 7);
     const d = AN.decomporVariacao(a, b);
     assert.ok(d, 'há dados nas duas semanas');
     const produto = (1 + d.partes.visitas.efeito) * (1 + d.partes.conversao.efeito) * (1 + d.partes.ticket.efeito);
@@ -29,9 +30,9 @@ test('decomposição: visitas × taxa de compra × ticket somam exatamente a var
   });
 });
 
-test('formato: cada recomendação traz dado, fatos, interpretação, recomendação, autorização e acompanhamento', () => {
-  em(A, () => {
-    const recs = AN.gerarRecomendacoes(A, hoje);
+test('formato: cada recomendação traz dado, fatos, interpretação, recomendação, autorização e acompanhamento', async () => {
+  await em(A, async () => {
+    const recs = await AN.gerarRecomendacoes(A, hoje);
     assert.ok(recs.length >= 2, 'a loja de demonstração tem sinais para analisar');
     for (const r of recs) {
       assert.ok(r.dado && r.interpretacao && r.recomendacao, r.titulo);
@@ -45,35 +46,35 @@ test('formato: cada recomendação traz dado, fatos, interpretação, recomenda�
   });
 });
 
-test('nada muda na loja só por analisar: a execução depende de autorização', () => {
-  em(A, () => {
-    const antes = JSON.stringify(getSettings(A).destaques_home);
-    const produtosAntes = JSON.stringify(db().list('products', A).map((p) => [p.id, p.ativo, p.destaque]));
-    AN.gerarRecomendacoes(A, hoje); AN.registrarRecomendacoes(A, hoje);
-    assert.equal(JSON.stringify(getSettings(A).destaques_home), antes);
-    assert.equal(JSON.stringify(db().list('products', A).map((p) => [p.id, p.ativo, p.destaque])), produtosAntes);
+test('nada muda na loja só por analisar: a execução depende de autorização', async () => {
+  await em(A, async () => {
+    const antes = JSON.stringify((await getSettings(A)).destaques_home);
+    const produtosAntes = JSON.stringify((await db().list('products', A)).map((p) => [p.id, p.ativo, p.destaque]));
+    await AN.gerarRecomendacoes(A, hoje); await AN.registrarRecomendacoes(A, hoje);
+    assert.equal(JSON.stringify((await getSettings(A)).destaques_home), antes);
+    assert.equal(JSON.stringify((await db().list('products', A)).map((p) => [p.id, p.ativo, p.destaque])), produtosAntes);
   });
 });
 
-test('aprovação executa, fixa a linha de base na execução e agenda revisão em 7 dias', () => {
-  em(A, () => {
-    const t = AN.registrarRecomendacoes(A, hoje).find((x) => x.recomendacao?.autorizacao?.acao?.acao === 'definir_destaques');
+test('aprovação executa, fixa a linha de base na execução e agenda revisão em 7 dias', async () => {
+  await em(A, async () => {
+    const t = (await AN.registrarRecomendacoes(A, hoje)).find((x) => x.recomendacao?.autorizacao?.acao?.acao === 'definir_destaques');
     assert.ok(t, 'há uma recomendação de destaque com ação autorizável');
     const alvo = t.recomendacao.autorizacao.acao.params.ids[0];
-    AN.executarRecomendacao(A, t.id, hoje);
-    const depois = db().get('tasks', t.id);
-    assert.equal(getSettings(A).destaques_home[0], alvo, 'o produto ficou em primeiro na página inicial');
+    await AN.executarRecomendacao(A, t.id, hoje);
+    const depois = await db().get('tasks', t.id);
+    assert.equal((await getSettings(A)).destaques_home[0], alvo, 'o produto ficou em primeiro na página inicial');
     assert.equal(depois.recomendacao.acompanhamento.revisar_em, addDays(hoje, 7));
     assert.ok(depois.recomendacao.acompanhamento.linha_base, 'linha de base registrada na execução');
     assert.match(depois.recomendacao.acompanhamento.linha_base.janela, /a /);
   });
 });
 
-test('acompanhamento compara duas janelas iguais e não afirma causa', () => {
-  em(A, () => {
+test('acompanhamento compara duas janelas iguais e não afirma causa', async () => {
+  await em(A, async () => {
     const revisar = addDays(hoje, 7);
-    AN.revisarRecomendacoes(A, revisar);
-    const feitas = db().list('tasks', A, (x) => x.tipo === 'recomendacao' && x.revisada);
+    await AN.revisarRecomendacoes(A, revisar);
+    const feitas = (await db().list('tasks', A)).filter((x) => x.tipo === 'recomendacao' && x.revisada);
     assert.ok(feitas.length >= 1);
     for (const f of feitas) {
       assert.match(f.revisao.texto, /Antes .*Depois/);
@@ -82,13 +83,13 @@ test('acompanhamento compara duas janelas iguais e não afirma causa', () => {
   });
 });
 
-test('amostra pequena: a loja nova não recebe afirmações', () => {
+test('amostra pequena: a loja nova não recebe afirmações', async () => {
   const C = `loja_vazia_${Date.now()}`;
-  db().put('tenants', { id: C, tenant_id: C, name: 'Vazia', status: 'active', plano: { agentes: { alex: true } }, integrations: {} });
-  em(C, () => {
-    assert.deepEqual(AN.gerarRecomendacoes(C, hoje), []);
-    assert.match(AN.comparacaoSemana(C, hoje).texto, /sem base|Faturamento/);
-    assert.match(AL.conversar ? AN.diagnosticoQueda(C, hoje).texto : '', /dados suficientes/);
+  await db().put('tenants', { id: C, tenant_id: C, name: 'Vazia', status: 'active', plano: { agentes: { alex: true } }, integrations: {} });
+  await em(C, async () => {
+    assert.deepEqual(await AN.gerarRecomendacoes(C, hoje), []);
+    assert.match((await AN.comparacaoSemana(C, hoje)).texto, /sem base|Faturamento/);
+    assert.match((await AN.diagnosticoQueda(C, hoje)).texto, /dados suficientes/);
   });
 });
 
@@ -113,27 +114,28 @@ test('ações por comando claro: destaques são executados na hora, com históri
   await em(A, async () => {
     const r = await AL.conversar(A, 'Alex, coloque o Box Rosas & Ferrero em destaque na página inicial');
     assert.match(r.texto, /Coloquei .* em primeiro na página inicial/);
-    assert.equal(getSettings(A).destaques_home[0], db().list('products', A, (p) => p.nome.startsWith('Box'))[0].id);
+    const box = (await db().list('products', A)).find((p) => p.nome.startsWith('Box'));
+    assert.equal((await getSettings(A)).destaques_home[0], box.id);
   });
 });
 
-test('isolamento: as recomendações de uma loja só apontam para produtos dela', () => {
-  em(B, () => {
-    const recs = AN.gerarRecomendacoes(B, hoje);
+test('isolamento: as recomendações de uma loja só apontam para produtos dela', async () => {
+  await em(B, async () => {
+    const recs = await AN.gerarRecomendacoes(B, hoje);
     for (const r of recs) if (r.acompanhamento.metrica?.produto_id) assert.ok(r.acompanhamento.metrica.produto_id.startsWith(`${B}:`), 'produto de outra loja');
     for (const r of recs) if (r.autorizacao.acao?.params?.ids) for (const id of r.autorizacao.acao.params.ids) assert.ok(id.startsWith(`${B}:`));
   });
 });
 
 test('"sim" depois de uma proposta executa a ação proposta; antes do "sim" nada muda', async () => {
-  const L = seedDemo('Loja sim');
+  const L = await seedDemo('Loja sim');
   await em(L, async () => {
-    const antes = JSON.stringify(getSettings(L).destaques_home);
+    const antes = JSON.stringify((await getSettings(L)).destaques_home);
     const r = await AL.conversar(L, 'o que devo fazer?');
     assert.match(r.texto, /Se quiser, respondo "sim"/);
-    assert.equal(JSON.stringify(getSettings(L).destaques_home), antes, 'a proposta não altera nada sozinha');
+    assert.equal(JSON.stringify((await getSettings(L)).destaques_home), antes, 'a proposta não altera nada sozinha');
     const ok = await AL.conversar(L, 'sim');
     assert.match(ok.texto, /Coloquei na página inicial, nesta ordem/);
-    assert.notEqual(JSON.stringify(getSettings(L).destaques_home), antes);
+    assert.notEqual(JSON.stringify((await getSettings(L)).destaques_home), antes);
   });
 });

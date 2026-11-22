@@ -18,20 +18,20 @@ const variacao = (a, b) => (b ? (a - b) / b : 0);
 const sinal = (v) => `${v >= 0 ? '+' : ''}${pct(v)}`;
 
 // ======================= INDICADORES E RELATÓRIOS =======================
-export function resumoDiario(tenantId, hoje = localDate()) {
+export async function resumoDiario(tenantId, hoje = localDate()) {
   const ontem = addDays(hoje, -1);
-  const d = periodo(tenantId, ontem, ontem);
-  const mesmoDiaSemanaPassada = periodo(tenantId, addDays(ontem, -7), addDays(ontem, -7));
-  const pedidosHoje = listOrders(tenantId, (o) => o.data === hoje && o.status !== 'cancelado');
-  const amanha = listOrders(tenantId, (o) => o.data === addDays(hoje, 1) && o.status !== 'cancelado');
-  const aguardando = listOrders(tenantId, (o) => o.status === 'aguardando_pagamento');
-  const prioridades = listTasks(tenantId).filter((t) => ['aguardando_dono', 'aberta'].includes(t.status)).slice(0, 5).map((t) => `${AGENTS[t.responsavel]?.nome || t.responsavel}: ${t.titulo}`);
-  const alteracoes = listChanges(tenantId).filter((c) => c.created_at.slice(0, 10) === hoje);
+  const d = await periodo(tenantId, ontem, ontem);
+  const mesmoDiaSemanaPassada = await periodo(tenantId, addDays(ontem, -7), addDays(ontem, -7));
+  const pedidosHoje = await listOrders(tenantId, (o) => o.data === hoje && o.status !== 'cancelado');
+  const amanha = await listOrders(tenantId, (o) => o.data === addDays(hoje, 1) && o.status !== 'cancelado');
+  const aguardando = await listOrders(tenantId, (o) => o.status === 'aguardando_pagamento');
+  const prioridades = (await listTasks(tenantId)).filter((t) => ['aguardando_dono', 'aberta'].includes(t.status)).slice(0, 5).map((t) => `${AGENTS[t.responsavel]?.nome || t.responsavel}: ${t.titulo}`);
+  const alteracoes = (await listChanges(tenantId)).filter((c) => c.created_at.slice(0, 10) === hoje);
   return {
     data: hoje,
     ontem: { ...d, comparacao: { faturamento: variacao(d.faturamento, mesmoDiaSemanaPassada.faturamento), pedidos: variacao(d.pedidos, mesmoDiaSemanaPassada.pedidos) } },
     producao: { hoje: pedidosHoje.length, amanha: amanha.length, aguardando_pagamento: aguardando.length },
-    perguntas: topPerguntas(tenantId, 3).map((q) => `${q.tema} (${q.total})`),
+    perguntas: (await topPerguntas(tenantId, 3)).map((q) => `${q.tema} (${q.total})`),
     alteracoes: alteracoes.map((c) => c.descricao),
     prioridades,
     texto: [
@@ -43,9 +43,9 @@ export function resumoDiario(tenantId, hoje = localDate()) {
   };
 }
 
-export function relatorioSemanal(tenantId, hoje = localDate()) {
-  const { atual, anterior } = compararSemanas(tenantId, hoje);
-  const prods = Object.fromEntries(listProducts(tenantId).map((p) => [p.id, p]));
+export async function relatorioSemanal(tenantId, hoje = localDate()) {
+  const { atual, anterior } = await compararSemanas(tenantId, hoje);
+  const prods = Object.fromEntries((await listProducts(tenantId)).map((p) => [p.id, p]));
   const top = Object.entries(atual.vendas).sort((a, b) => b[1] - a[1]).slice(0, 5).map(([id, q]) => ({ nome: prods[id]?.nome || id, qtd: q }));
   const procurados = Object.entries(atual.buscas).map(([id, b]) => ({ id, nome: prods[id]?.nome || id, buscas: b, vendas: atual.vendas[id] || 0 }))
     .map((x) => ({ ...x, conv: x.buscas ? x.vendas / x.buscas : 0 })).sort((a, b) => b.buscas - a.buscas).slice(0, 6);
@@ -59,16 +59,16 @@ export function relatorioSemanal(tenantId, hoje = localDate()) {
 }
 
 // ======================= COMPRAS DE FLORES E INSUMOS =======================
-export function sugestaoCompras(tenantId, hoje = localDate()) {
-  const cfg = getConfig(tenantId, 'alex').compras;
-  const base = periodo(tenantId, addDays(hoje, -14), addDays(hoje, -1));
+export async function sugestaoCompras(tenantId, hoje = localDate()) {
+  const cfg = (await getConfig(tenantId, 'alex')).compras;
+  const base = await periodo(tenantId, addDays(hoje, -14), addDays(hoje, -1));
   const diasBase = Math.max(1, base.dias);
-  const s = getSettings(tenantId);
+  const s = await getSettings(tenantId);
   const janelaFim = addDays(hoje, cfg.dias_cobertura - 1);
   const data = proximasDatas(cfg.dias_cobertura + 2, hoje).find((d) => d.peso >= 4);
   const comemorativo = (s.modo_comemorativo || []).some((m) => m.inicio <= janelaFim && m.fim >= hoje);
   const fator = data || comemorativo ? cfg.fator_data_comemorativa : 1;
-  const prods = listProducts(tenantId);
+  const prods = await listProducts(tenantId);
   const consumo = {}; const semComposicao = [];
   for (const p of prods) {
     const vendidos = base.vendas[p.id] || 0;
@@ -77,7 +77,7 @@ export function sugestaoCompras(tenantId, hoje = localDate()) {
     if (!p.composicao?.length) { semComposicao.push(p.nome); continue; }
     for (const c of p.composicao) consumo[c.insumo_id] = (consumo[c.insumo_id] || 0) + previsto * c.qtd;
   }
-  const linhas = listInsumos(tenantId).filter((i) => consumo[i.id]).map((i) => {
+  const linhas = (await listInsumos(tenantId)).filter((i) => consumo[i.id]).map((i) => {
     const perda = (i.perda_pct ?? cfg.perda_padrao_pct) / 100;
     const necessario = consumo[i.id] * (1 + perda);
     const estoque = i.estoque ?? 0; const previstas = i.compra_prevista || 0;
@@ -102,10 +102,10 @@ export { gerarRecomendacoes, registrarRecomendacoes, executarRecomendacao, revis
 registrarCompras(sugestaoCompras);
 
 // ======================= CONVERSA COM O DONO =======================
-export function getChat(tenantId, agente = 'alex') {
-  return db().get('chats', `${tenantId}:${agente}`) || { id: `${tenantId}:${agente}`, tenant_id: tenantId, agente, mensagens: [], pendente: null };
+export async function getChat(tenantId, agente = 'alex') {
+  return (await db().get('chats', `${tenantId}:${agente}`)) || { id: `${tenantId}:${agente}`, tenant_id: tenantId, agente, mensagens: [], pendente: null };
 }
-export function saveChat(chat) { return db().put('chats', chat); }
+export async function saveChat(chat) { return db().put('chats', chat); }
 
 function interpretar(tenantId, texto, pendente) {
   const t = norm(texto);
@@ -194,23 +194,23 @@ function formatarCompras(c) {
 const AJUDA = 'Posso executar na loja, por exemplo:\n• "Acabou a rosa vermelha. Desative os produtos que usam essa flor."\n• "No dia 7 não teremos entregas."\n• "Ative o catálogo de data comemorativa do dia 10 ao dia 12."\n• "Atualize o estoque do Buquê Encanto para 15 unidades."\n• "Configure o frete da Vila Mariana para R$12."\n• "Dia 24 vamos abrir das 8h às 13h."\n• "Desfaça a última alteração."\nE também: "resumo do dia", "relatório da semana", "o que devo fazer?", "sugestão de compras".';
 
 async function responderInfo(tenantId, info, it = {}) {
-  if (info === 'resumo') return resumoDiario(tenantId).texto;
-  if (info === 'semanal') return formatarSemanal(relatorioSemanal(tenantId));
-  if (info === 'compras') return formatarCompras(sugestaoCompras(tenantId));
-  if (info === 'compras_item') return comprasItem(tenantId, it.item, sugestaoCompras(tenantId)).texto;
-  if (info === 'queda') { const d = diagnosticoQueda(tenantId); const c = d.recomendacoes.find((r) => r.autorizacao.acao); return { texto: d.texto, pendente: c ? c.autorizacao.acao : null }; }
-  if (info === 'comparacao') return comparacaoSemana(tenantId).texto;
-  if (info === 'promocao') return analisePromocao(tenantId, null).texto;
-  if (info === 'divulgacao') { const d = sugestoesDivulgacao(tenantId); return { texto: d.texto + (d.pergunta ? `\n\n${d.pergunta}` : ''), pendente: d.pendente }; }
+  if (info === 'resumo') return (await resumoDiario(tenantId)).texto;
+  if (info === 'semanal') return formatarSemanal(await relatorioSemanal(tenantId));
+  if (info === 'compras') return formatarCompras(await sugestaoCompras(tenantId));
+  if (info === 'compras_item') return comprasItem(tenantId, it.item, await sugestaoCompras(tenantId)).texto;
+  if (info === 'queda') { const d = await diagnosticoQueda(tenantId); const c = d.recomendacoes.find((r) => r.autorizacao.acao); return { texto: d.texto, pendente: c ? c.autorizacao.acao : null }; }
+  if (info === 'comparacao') return (await comparacaoSemana(tenantId)).texto;
+  if (info === 'promocao') return (await analisePromocao(tenantId, null)).texto;
+  if (info === 'divulgacao') { const d = await sugestoesDivulgacao(tenantId); return { texto: d.texto + (d.pergunta ? `\n\n${d.pergunta}` : ''), pendente: d.pendente }; }
   if (info === 'recomendacoes') {
-    const recs = gerarRecomendacoes(tenantId); registrarRecomendacoes(tenantId);
+    const recs = await gerarRecomendacoes(tenantId); await registrarRecomendacoes(tenantId);
     const c = recs.find((r) => r.autorizacao.acao);
     return { texto: formatarRecs(recs) + (c ? `\n\nSe quiser, respondo "sim" e executo a primeira proposta com ação: ${c.titulo}.` : ''), pendente: c ? c.autorizacao.acao : null };
   }
   return AJUDA;
 }
 
-const LLM_SYSTEM = (tenantId) => `Você é o Alex, gerente da floricultura dentro do iFlores. Fale português do Brasil, direto e cordial.
+const LLM_SYSTEM = async (tenantId, cfg) => `Você é o Alex, gerente da floricultura dentro do iFlores. Fale português do Brasil, direto e cordial.
 Você executa alterações na loja usando as ferramentas e orienta o dono com base nos dados.
 Regras:
 - Use apenas as ferramentas para alterar a loja; nunca diga que fez algo que nenhuma ferramenta confirmou.
@@ -222,7 +222,7 @@ Regras:
 - Uma ação que o dono pediu com comando claro se executa. Uma ação que você mesmo recomendou só se executa depois de o dono aprovar.
 - Antes de recomendar descontos ou promoções, consulte a análise financeira (ferramenta consultar_sol).
 - Estimativas de compra não são quantidades exatas.
-Hoje é ${localDate()}. Permissões: ${JSON.stringify(getConfig(tenantId, 'alex').permissoes)}. ${getConfig(tenantId, 'alex').instrucoes || ''}`;
+Hoje é ${localDate()}. Permissões: ${JSON.stringify(cfg.permissoes)}. ${cfg.instrucoes || ''}`;
 
 function llmTools(tenantId, comando) {
   const typeOf = (t) => (t.includes('[]') ? ['array', 'null'] : t.startsWith('number') ? ['number', 'null'] : t.startsWith('boolean') ? ['boolean', 'null'] : ['string', 'null']);
@@ -235,27 +235,27 @@ function llmTools(tenantId, comando) {
   tools.push(info('resumo_do_dia', 'Indicadores de ontem, produção de hoje e pendências.', () => resumoDiario(tenantId)));
   tools.push(info('relatorio_semanal', 'Comparação da semana com a anterior, funil, mais vendidos e procurados x vendidos.', () => relatorioSemanal(tenantId)));
   tools.push(info('sugestao_compras', 'Estimativa de compra de flores e insumos.', () => sugestaoCompras(tenantId)));
-  tools.push(info('recomendacoes', 'Recomendações com hipótese, ação e data de revisão (registradas em Tarefas).', () => { registrarRecomendacoes(tenantId); return gerarRecomendacoes(tenantId); }));
+  tools.push(info('recomendacoes', 'Recomendações com hipótese, ação e data de revisão (registradas em Tarefas).', async () => { await registrarRecomendacoes(tenantId); return gerarRecomendacoes(tenantId); }));
   const tool = (name, description, props, required, run) => ({ name, description, input_schema: { type: 'object', additionalProperties: false, required, properties: props }, run });
-  tools.push(info('diagnostico_queda', 'Diagnóstico de queda de vendas: decompõe a variação em visitas, taxa de compra e ticket, e traz as recomendações.', () => diagnosticoQueda(tenantId).texto));
-  tools.push(info('comparar_semanas', 'Comparação dos últimos 7 dias com os 7 anteriores, com o que mais mudou.', () => comparacaoSemana(tenantId).texto));
-  tools.push(info('sugestoes_divulgacao', 'Produtos que valem divulgar agora, com procura, taxa de compra e margem.', () => sugestoesDivulgacao(tenantId).texto));
-  tools.push(tool('analise_promocao', 'Efeito de uma promoção sobre a margem e sobre a capacidade. Sem produto, analisa os candidatos.', { produto: { type: ['string', 'null'] }, desconto_pct: { type: ['number', 'null'] } }, [], (i) => analisePromocao(tenantId, i.produto || null, i.desconto_pct || 10).texto));
-  tools.push(tool('compras_item', 'Quanto comprar de uma flor ou insumo, com consumo previsto, perda, estoque e limitações.', { item: { type: 'string' } }, ['item'], (i) => comprasItem(tenantId, i.item, sugestaoCompras(tenantId)).texto));
+  tools.push(info('diagnostico_queda', 'Diagnóstico de queda de vendas: decompõe a variação em visitas, taxa de compra e ticket, e traz as recomendações.', () => diagnosticoQueda(tenantId).then((r) => r.texto)));
+  tools.push(info('comparar_semanas', 'Comparação dos últimos 7 dias com os 7 anteriores, com o que mais mudou.', () => comparacaoSemana(tenantId).then((r) => r.texto)));
+  tools.push(info('sugestoes_divulgacao', 'Produtos que valem divulgar agora, com procura, taxa de compra e margem.', () => sugestoesDivulgacao(tenantId).then((r) => r.texto)));
+  tools.push(tool('analise_promocao', 'Efeito de uma promoção sobre a margem e sobre a capacidade. Sem produto, analisa os candidatos.', { produto: { type: ['string', 'null'] }, desconto_pct: { type: ['number', 'null'] } }, [], (i) => analisePromocao(tenantId, i.produto || null, i.desconto_pct || 10).then((r) => r.texto)));
+  tools.push(tool('compras_item', 'Quanto comprar de uma flor ou insumo, com consumo previsto, perda, estoque e limitações.', { item: { type: 'string' } }, ['item'], (i) => sugestaoCompras(tenantId).then((c) => comprasItem(tenantId, i.item, c).texto)));
   tools.push({ name: 'consultar_sol', description: 'Pergunta à Sol o impacto de um desconto em um produto.', input_schema: { type: 'object', additionalProperties: false, required: ['produto', 'desconto_pct'], properties: { produto: { type: 'string' }, desconto_pct: { type: 'number' } } },
-    run: ({ produto, desconto_pct }) => { const p = listProducts(tenantId).find((x) => norm(x.nome).includes(norm(produto))); return p ? impactoDesconto(tenantId, { produto: p, descontoPct: desconto_pct }) : { erro: 'produto não encontrado' }; } });
+    run: async ({ produto, desconto_pct }) => { const p = (await listProducts(tenantId)).find((x) => norm(x.nome).includes(norm(produto))); return p ? impactoDesconto(tenantId, { produto: p, descontoPct: desconto_pct }) : { erro: 'produto não encontrado' }; } });
   return tools;
 }
 
 export function conversar(tenantId, texto, opts = {}) { return serial(`${tenantId}:chat:alex`, () => conversarAgora(tenantId, texto, opts)); }
 async function conversarAgora(tenantId, texto, opts = {}) {
-  if (!active(tenantId, 'alex')) return { texto: 'O Alex não está contratado ou está pausado nesta loja.' };
-  const chat = getChat(tenantId);
+  if (!(await active(tenantId, 'alex'))) return { texto: 'O Alex não está contratado ou está pausado nesta loja.' };
+  const chat = await getChat(tenantId);
   chat.mensagens.push({ role: 'user', texto, em: now() });
   const resposta = await working(tenantId, 'alex', 'Atendendo um pedido do dono', async () => {
     if (aiEnabled()) {
       const history = chat.mensagens.slice(-16).map((m) => ({ role: m.role === 'user' ? 'user' : 'assistant', content: m.texto }));
-      const r = await runToolLoop({ system: LLM_SYSTEM(tenantId), messages: history, tools: llmTools(tenantId, texto), effort: 'medium', trace: opts.trace });
+      const r = await runToolLoop({ system: await LLM_SYSTEM(tenantId, await getConfig(tenantId, 'alex')), messages: history, tools: llmTools(tenantId, texto), effort: 'medium', trace: opts.trace });
       return { texto: r.text || 'Não consegui concluir. Pode reformular?' };
     }
     const it = interpretar(tenantId, texto, chat.pendente);
@@ -263,25 +263,25 @@ async function conversarAgora(tenantId, texto, opts = {}) {
     if (it.texto) return { texto: it.texto };
     if (it.info) { const x = await responderInfo(tenantId, it.info, it); if (typeof x === 'string') return { texto: x }; if (x.pendente) chat.pendente = x.pendente; return { texto: x.texto }; }
     if (it.ajuda) return { texto: AJUDA };
-    const r = executar(tenantId, it.acao, it.params, { comando: texto, confirmado: it.confirmado });
+    const r = await executar(tenantId, it.acao, it.params, { comando: texto, confirmado: it.confirmado });
     if (r.negado) return { texto: r.negado };
     if (r.pergunta) { chat.pendente = r.pendente || null; return { texto: r.pergunta }; }
     if (r.pendente) chat.pendente = r.pendente;
     return { texto: r.texto, change_id: r.change_id };
   });
   chat.mensagens.push({ role: 'assistant', texto: resposta.texto, em: now(), change_id: resposta.change_id });
-  saveChat(chat);
+  await saveChat(chat);
   return resposta;
 }
 
 // ======================= ROTINA =======================
 export async function rotina(tenantId, { enviarResumo = false } = {}) {
-  if (!active(tenantId, 'alex')) return null;
-  return working(tenantId, 'alex', 'Analisando os números da loja', () => {
-    const recs = registrarRecomendacoes(tenantId);
-    revisarRecomendacoes(tenantId);
-    const r = resumoDiario(tenantId);
-    db().put('reports', { id: uid('rep_'), tenant_id: tenantId, agent: 'alex', tipo: 'resumo_diario', ...r, created_at: now() });
+  if (!(await active(tenantId, 'alex'))) return null;
+  return working(tenantId, 'alex', 'Analisando os números da loja', async () => {
+    const recs = await registrarRecomendacoes(tenantId);
+    await revisarRecomendacoes(tenantId);
+    const r = await resumoDiario(tenantId);
+    await db().put('reports', { id: uid('rep_'), tenant_id: tenantId, agent: 'alex', tipo: 'resumo_diario', ...r, created_at: now() });
     log(tenantId, 'alex', `Resumo do dia pronto: ${r.ontem.pedidos} pedidos ontem, ${r.producao.hoje} para hoje, ${recs.length} recomendação(ões) em aberto`, { type: 'resumo', level: 'success' });
     return { resumo: r, recomendacoes: recs.length, enviar: enviarResumo };
   });

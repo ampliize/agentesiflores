@@ -8,9 +8,9 @@ import { enfileirar } from './outbox.js';
 
 // ---------------- leitura ----------------
 export const getProduct = (id) => db().get('products', id);
-export const listProducts = (tenantId) => db().list('products', tenantId).sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'));
-export const listInsumos = (tenantId) => db().list('insumos', tenantId).sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'));
-export const insumoMap = (tenantId) => Object.fromEntries(listInsumos(tenantId).map((i) => [i.id, i]));
+export const listProducts = async (tenantId) => (await db().list('products', tenantId)).sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'));
+export const listInsumos = async (tenantId) => (await db().list('insumos', tenantId)).sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'));
+export const insumoMap = async (tenantId) => Object.fromEntries((await listInsumos(tenantId)).map((i) => [i.id, i]));
 
 export const DEFAULT_SETTINGS = {
   horarios: { seg: ['08:00', '19:00'], ter: ['08:00', '19:00'], qua: ['08:00', '19:00'], qui: ['08:00', '19:00'], sex: ['08:00', '19:00'], sab: ['08:00', '17:00'], dom: null },
@@ -27,8 +27,8 @@ export const DEFAULT_SETTINGS = {
   destaques_home: [],              // ids dos produtos da página inicial, na ordem de exibição
 };
 
-export function getSettings(tenantId) {
-  const s = db().get('settings', tenantId);
+export async function getSettings(tenantId) {
+  const s = await db().get('settings', tenantId);
   return { ...DEFAULT_SETTINGS, ...(s || {}), id: tenantId, tenant_id: tenantId };
 }
 
@@ -51,21 +51,20 @@ export function composicaoTexto(p, imap) {
 }
 
 /** Produtos que o cliente pode comprar agora, com busca simples por texto. */
-export function buscarProdutos(tenantId, { busca = '', precoMax, tipo = 'produto', data } = {}) {
-  const s = getSettings(tenantId); const imap = insumoMap(tenantId);
-  const disp = listProducts(tenantId).filter((p) => (tipo === 'todos' || (p.tipo || 'produto') === tipo) && disponibilidade(p, s, data).ok && (!precoMax || p.preco <= precoMax));
+export async function buscarProdutos(tenantId, { busca = '', precoMax, tipo = 'produto', data } = {}) {
+  const s = await getSettings(tenantId); const imap = await insumoMap(tenantId);
+  const disp = (await listProducts(tenantId)).filter((p) => (tipo === 'todos' || (p.tipo || 'produto') === tipo) && disponibilidade(p, s, data).ok && (!precoMax || p.preco <= precoMax));
   const termos = tokens(busca).filter((w) => !STOP.has(w) && w.length > 2);
   if (!termos.length) return disp;
   const score = (p) => { const t = new Set(tokens(`${p.nome} ${p.descricao} ${p.categoria} ${(p.tags || []).join(' ')} ${composicaoTexto(p, imap)}`)); return termos.filter((w) => t.has(w)).length; };
-  const ranked = disp.map((p) => [p, score(p)]).filter(([, n]) => n > 0).sort((a, b) => b[1] - a[1]).map(([p]) => p);
-  return ranked;
+  return disp.map((p) => [p, score(p)]).filter(([, n]) => n > 0).sort((a, b) => b[1] - a[1]).map(([p]) => p);
 }
 
 /** Encontra produtos que usam um insumo/flor, pelo cadastro de composição, nome ou descrição. */
-export function produtosComItem(tenantId, termo) {
-  const imap = insumoMap(tenantId);
+export async function produtosComItem(tenantId, termo) {
+  const imap = await insumoMap(tenantId);
   const insumosAlvo = Object.values(imap).filter((i) => contemTermos(i.nome, termo)).map((i) => i.id);
-  return listProducts(tenantId).map((p) => {
+  return (await listProducts(tenantId)).map((p) => {
     if (p.composicao?.some((c) => insumosAlvo.includes(c.insumo_id))) return { p, por: 'composição' };
     if (contemTermos(p.nome, termo)) return { p, por: 'nome' };
     if (contemTermos(`${p.descricao} ${p.composicao_texto || ''}`, termo)) return { p, por: 'descrição' };
@@ -74,8 +73,8 @@ export function produtosComItem(tenantId, termo) {
 }
 
 /** Procura produto pelo nome (para comandos como "atualize o estoque do Buquê Encanto"). */
-export function acharProduto(tenantId, texto) {
-  const all = listProducts(tenantId); const t = norm(texto);
+export async function acharProduto(tenantId, texto) {
+  const all = await listProducts(tenantId); const t = norm(texto);
   const exato = all.filter((p) => t.includes(norm(p.nome)));
   if (exato.length) return exato.sort((a, b) => b.nome.length - a.nome.length).slice(0, 1);
   const tk = tokens(texto).filter((w) => !STOP.has(w) && w.length > 3);
@@ -93,8 +92,8 @@ export function horarioDoDia(settings, data) {
 }
 
 /** Verifica se é possível entregar/retirar em uma data, com o motivo quando não for. */
-export function verificarData(tenantId, data, modalidade = 'entrega', agora = new Date()) {
-  const s = getSettings(tenantId); const hoje = localDate(agora);
+export async function verificarData(tenantId, data, modalidade = 'entrega', agora = new Date()) {
+  const s = await getSettings(tenantId); const hoje = localDate(agora);
   if (!s.recebendo_pedidos) return { ok: false, motivo: 'A loja pausou o recebimento de pedidos no momento.' };
   if (!data || data < hoje) return { ok: false, motivo: 'Data inválida ou no passado.' };
   const bloq = (s.datas_bloqueadas || []).find((b) => b.data === data && (b.pedidos || b[modalidade]));
@@ -109,13 +108,13 @@ export function verificarData(tenantId, data, modalidade = 'entrega', agora = ne
     janelas = janelas.filter((j) => Number(j.slice(0, 2)) >= Number(hora.slice(0, 2)) + 3);
     if (!janelas.length) return { ok: false, motivo: 'Não há mais janelas de entrega hoje.' };
   }
-  const doDia = db().list('orders', tenantId, (o) => o.data === data && o.status !== 'cancelado').length;
+  const doDia = (await db().list('orders', tenantId, (o) => o.data === data && o.status !== 'cancelado')).length;
   if (doDia >= s.capacidade_pedidos_dia) return { ok: false, motivo: 'A produção desse dia já está completa.' };
   return { ok: true, janelas: modalidade === 'retirada' ? [`${h[0]} às ${h[1]}`] : janelas, horario: h };
 }
 
-export function calcularFrete(tenantId, bairro) {
-  const s = getSettings(tenantId);
+export async function calcularFrete(tenantId, bairro) {
+  const s = await getSettings(tenantId);
   const f = (s.fretes || []).find((x) => x.ativo !== false && norm(x.bairro) === norm(bairro));
   if (f) return { ok: true, bairro: f.bairro, valor: f.valor };
   const parecido = (s.fretes || []).find((x) => x.ativo !== false && (norm(bairro).includes(norm(x.bairro)) || norm(x.bairro).includes(norm(bairro))));
@@ -128,46 +127,48 @@ export function calcularFrete(tenantId, bairro) {
  * ops: [{ coll, id, after }]  (after = documento completo; null remove)
  * Registra o "antes" de cada documento para permitir desfazer.
  */
-export function applyChanges(tenantId, { actor, comando = '', descricao, ops, origem = 'painel' }) {
-  const s0 = getSettings(tenantId);
-  const before = ops.map((o) => ({ ...o, before: db().get(o.coll, o.id) }));
+export async function applyChanges(tenantId, { actor, comando = '', descricao, ops, origem = 'painel' }) {
+  const s0 = await getSettings(tenantId);
+  const before = [];
+  for (const o of ops) before.push({ ...o, before: await db().get(o.coll, o.id) });
   for (const o of before) {
-    if (o.after === null) db().del(o.coll, o.id);
-    else db().put(o.coll, { ...o.after, tenant_id: tenantId });
+    if (o.after === null) await db().del(o.coll, o.id);
+    else await db().put(o.coll, { ...o.after, tenant_id: tenantId });
   }
-  const change = db().put('changes', { id: uid('chg_'), tenant_id: tenantId, actor, comando, descricao, origem, ops: before.map(({ coll, id, before: b, after }) => ({ coll, id, before: b, after })), revertida: false, created_at: now() });
+  const change = await db().put('changes', { id: uid('chg_'), tenant_id: tenantId, actor, comando, descricao, origem, ops: before.map(({ coll, id, before: b, after }) => ({ coll, id, before: b, after })), revertida: false, created_at: now() });
   log(tenantId, actor, descricao, { type: 'alteracao', kind: 'acao', level: 'success', data: { change_id: change.id } });
   enfileirar(tenantId, 'alteracao.aplicar', { change_id: change.id, descricao, ops: change.ops.map(({ coll, id, after }) => ({ coll, id, after })) });
-  notificarDisponibilidade(tenantId, before, s0);
+  await notificarDisponibilidade(tenantId, before, s0);
   return change;
 }
 
-export function undoChange(tenantId, changeId, actor = 'dono') {
-  const c = db().get('changes', changeId);
+export async function undoChange(tenantId, changeId, actor = 'dono') {
+  const c = await db().get('changes', changeId);
   if (!c || c.tenant_id !== tenantId) throw new Error('Alteração não encontrada');
   if (c.revertida) throw new Error('Essa alteração já foi desfeita');
-  const s0 = getSettings(tenantId);
-  const ops = c.ops.map((o) => ({ coll: o.coll, id: o.id, before: db().get(o.coll, o.id), after: o.before }));
-  for (const o of ops) { if (o.after === null) db().del(o.coll, o.id); else db().put(o.coll, o.after); }
-  db().put('changes', { ...c, revertida: true, revertida_em: now(), revertida_por: actor });
+  const s0 = await getSettings(tenantId);
+  const ops = [];
+  for (const o of c.ops) ops.push({ coll: o.coll, id: o.id, before: await db().get(o.coll, o.id), after: o.before });
+  for (const o of ops) { if (o.after === null) await db().del(o.coll, o.id); else await db().put(o.coll, o.after); }
+  await db().put('changes', { ...c, revertida: true, revertida_em: now(), revertida_por: actor });
   log(tenantId, actor === 'dono' ? 'alex' : actor, `Desfez: ${c.descricao}`, { type: 'reversao', kind: 'acao', level: 'warning', data: { change_id: c.id } });
-  notificarDisponibilidade(tenantId, ops, s0);
+  await notificarDisponibilidade(tenantId, ops, s0);
   return db().get('changes', changeId);
 }
 
-export const listChanges = (tenantId) => db().list('changes', tenantId).sort((a, b) => (a.created_at < b.created_at ? 1 : -1));
+export const listChanges = async (tenantId) => (await db().list('changes', tenantId)).sort((a, b) => (a.created_at < b.created_at ? 1 : -1));
 
 /** Compara disponibilidade antes/depois e avisa Flora, Mari e Caio pela base compartilhada. */
-function notificarDisponibilidade(tenantId, ops, settingsAntes) {
-  const s1 = getSettings(tenantId);
+async function notificarDisponibilidade(tenantId, ops, settingsAntes) {
+  const s1 = await getSettings(tenantId);
   const sairam = []; const voltaram = [];
   const ids = new Set(ops.filter((o) => o.coll === 'products').map((o) => o.id));
   // mudanças de calendário comemorativo afetam todos os produtos comemorativos
-  if (ops.some((o) => o.coll === 'settings')) listProducts(tenantId).filter((p) => p.comemorativo).forEach((p) => ids.add(p.id));
+  if (ops.some((o) => o.coll === 'settings')) (await listProducts(tenantId)).filter((p) => p.comemorativo).forEach((p) => ids.add(p.id));
   for (const id of ids) {
     const op = ops.find((o) => o.coll === 'products' && o.id === id);
-    const antes = disponibilidade(op ? op.before : getProduct(id), settingsAntes).ok;
-    const depois = disponibilidade(getProduct(id), s1).ok;
+    const antes = disponibilidade(op ? op.before : await getProduct(id), settingsAntes).ok;
+    const depois = disponibilidade(await getProduct(id), s1).ok;
     if (antes && !depois) sairam.push(id);
     if (!antes && depois) voltaram.push(id);
   }

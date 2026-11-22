@@ -1,11 +1,11 @@
 // Armazenamento de documentos usado por todo o núcleo, com ISOLAMENTO OBRIGATÓRIO entre lojas.
+// Todas as operações são assíncronas (o banco é remoto, no Supabase).
 //
-// Regra do produto: nenhuma loja pode ler, alterar ou receber dados de outra. Por isso todo trabalho
-// de uma loja roda dentro de comLoja(tenantId, fn) e o store recusa (IsolationError) qualquer leitura
-// ou escrita de documento cujo tenant_id seja diferente da loja do contexto. Isso vale mesmo que um
-// trecho de código esqueça de filtrar: o erro aparece em vez de vazar dados.
+// Regra do produto: nenhuma loja pode ler, alterar ou receber dados de outra. Todo trabalho de uma
+// loja roda dentro de comLoja(tenantId, fn), e o store recusa (IsolationError) qualquer leitura ou
+// escrita de documento cujo tenant_id seja diferente da loja do contexto.
 //
-// Implementações: SQLite no servidor (src/server/sqlite-store.js) e memória na demo e nos testes.
+// Implementações: Supabase no servidor (src/server/supabase-store.js) e memória na demo e nos testes.
 
 let current = null;
 let ctx = (() => { let t = null; return { get: () => t, run: (tenantId, fn) => { const prev = t; t = tenantId; try { const r = fn(); if (r && typeof r.then === 'function') return r.finally(() => { t = prev; }); t = prev; return r; } catch (e) { t = prev; throw e; } } }; })();
@@ -33,21 +33,21 @@ function guard(raw) {
     if (t && doc && doc.tenant_id !== t) throw new IsolationError(`${op} em ${coll}/${doc.id} pertence a outra loja`);
   };
   return {
-    get(coll, id) { const d = raw.get(coll, id); check(coll, d, 'leitura'); return d; },
-    list(coll, tenantId, filter) {
+    async get(coll, id) { const d = await raw.get(coll, id); check(coll, d, 'leitura'); return d; },
+    async list(coll, tenantId, filter) {
       const t = ctx.get();
       if (t && tenantId !== t) throw new IsolationError(`listagem de ${coll} ${tenantId == null ? 'de todas as lojas' : `da loja ${tenantId}`} dentro do contexto de ${t}`);
       return raw.list(coll, tenantId, filter);
     },
-    put(coll, doc) {
+    async put(coll, doc) {
       if (!doc?.id) throw new Error(`Documento sem id em ${coll}`);
       if (!doc.tenant_id) throw new IsolationError(`documento ${coll}/${doc.id} sem tenant_id`);
       check(coll, doc, 'escrita');
-      const prev = raw.get(coll, doc.id);
+      const prev = await raw.get(coll, doc.id);
       if (prev && prev.tenant_id !== doc.tenant_id) throw new IsolationError(`${coll}/${doc.id} já pertence a outra loja`);
       return raw.put(coll, doc);
     },
-    del(coll, id) { check(coll, raw.get(coll, id), 'remoção'); raw.del(coll, id); },
+    async del(coll, id) { check(coll, await raw.get(coll, id), 'remoção'); await raw.del(coll, id); },
   };
 }
 
@@ -56,25 +56,25 @@ export function db() {
   return guard(current);
 }
 
-/** Store em memória indexado por loja (demo e testes). */
+/** Store em memória indexado por loja (demo e testes). Mesmo contrato assíncrono do Supabase. */
 export function createMemoryStore() {
   const docs = new Map(); const idx = new Map();
   const c = (m, k) => { if (!m.has(k)) m.set(k, new Map()); return m.get(k); };
   const clone = (x) => (x == null ? x : structuredClone(x));
   return {
-    get: (coll, id) => clone(c(docs, coll).get(id) ?? null),
-    list: (coll, tenantId, filter) => {
+    async get(coll, id) { return clone(c(docs, coll).get(id) ?? null); },
+    async list(coll, tenantId, filter) {
       const src = tenantId == null ? c(docs, coll).values() : c(c(idx, coll), tenantId).values();
       const out = []; for (const d of src) if (!filter || filter(d)) out.push(clone(d));
       return out;
     },
-    put: (coll, doc) => {
+    async put(coll, doc) {
       const t = new Date().toISOString(); const prev = c(docs, coll).get(doc.id);
       const saved = clone({ ...doc, created_at: prev?.created_at || doc.created_at || t, updated_at: t });
       c(docs, coll).set(doc.id, saved); c(c(idx, coll), saved.tenant_id).set(doc.id, saved);
       return clone(saved);
     },
-    del: (coll, id) => { const d = c(docs, coll).get(id); if (d) { c(docs, coll).delete(id); c(c(idx, coll), d.tenant_id).delete(id); } },
+    async del(coll, id) { const d = c(docs, coll).get(id); if (d) { c(docs, coll).delete(id); c(c(idx, coll), d.tenant_id).delete(id); } },
   };
 }
 

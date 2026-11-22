@@ -22,9 +22,9 @@ const sg = (v) => `${v >= 0 ? '+' : ''}${pct(v)}`;
 
 // ---------------------------------------------------------------- janelas e métricas
 /** Soma os indicadores de `dias` terminando em `fim`. */
-export function janela(tenantId, fim, dias = 7) {
+export async function janela(tenantId, fim, dias = 7) {
   const ini = addDays(fim, -dias + 1);
-  const rows = db().list('dias', tenantId, (d) => d.data >= ini && d.data <= fim);
+  const rows = await db().list('dias', tenantId, (d) => d.data >= ini && d.data <= fim);
   const w = { ini, fim, dias: rows.length, visitas: 0, carrinhos: 0, checkouts: 0, pedidos: 0, faturamento: 0,
     pagina: { home: 0, categoria: 0, produto: 0 }, vendas: {}, buscas: {} };
   for (const r of rows) {
@@ -88,8 +88,8 @@ function montar(o) {
   };
 }
 
-function recQueda(tenantId, fim, lojaConv) {
-  const a = janela(tenantId, fim, 7); const b = janela(tenantId, addDays(fim, -7), 7);
+async function recQueda(tenantId, fim, lojaConv) {
+  const a = await janela(tenantId, fim, 7); const b = await janela(tenantId, addDays(fim, -7), 7);
   const d = decomporVariacao(a, b);
   if (!d || d.variacao > -0.1) return [];
   const confianca = a.visitas >= AMOSTRA_MINIMA_VISITAS && b.visitas >= AMOSTRA_MINIMA_VISITAS ? 'alta' : 'baixa';
@@ -103,7 +103,7 @@ function recQueda(tenantId, fim, lojaConv) {
   const base = { id: `queda:${p}`, tipo: 'queda', prioridade: 1, confianca, fatos, limitacoes, metricaRotulo: 'o faturamento' };
   const dado = `Faturamento de ${brl(a.faturamento)} nos últimos 7 dias, ${sg(d.variacao)} em relação aos 7 anteriores (${brl(b.faturamento)}).`;
   if (p === 'visitas') {
-    const top = topVendidos(tenantId, a, 3);
+    const top = await topVendidos(tenantId, a, 3);
     return [montar({ ...base, titulo: 'Queda de faturamento causada por menos visitas', dado,
       interpretacao: `O maior efeito veio de ${ROTULO_PRINCIPAL.visitas}. Isso costuma ser falta de divulgação ou de procura, mas os dados desta loja não dizem de onde vêm os visitantes.`,
       hipoteses: ['A divulgação diminuiu ou os anúncios perderam alcance.', 'A procura caiu na época.'],
@@ -129,14 +129,15 @@ function recQueda(tenantId, fim, lojaConv) {
     pergunta: null, acao: null, metrica: { nome: 'faturamento' }, limitacoes })];
 }
 
-function topVendidos(tenantId, w, n) {
-  const ps = listProducts(tenantId).filter((p) => (p.tipo || 'produto') === 'produto' && disponibilidade(p, getSettings(tenantId)).ok);
+async function topVendidos(tenantId, w, n) {
+  const s = await getSettings(tenantId);
+  const ps = (await listProducts(tenantId)).filter((p) => (p.tipo || 'produto') === 'produto' && disponibilidade(p, s).ok);
   return ps.map((p) => ({ id: p.id, nome: p.nome, vendas: w.vendas[p.id] || 0 })).filter((x) => x.vendas > 0).sort((a, b) => b.vendas - a.vendas).slice(0, n);
 }
 
-function recIndisponivel(tenantId, w, lojaConv) {
-  const s = getSettings(tenantId); const out = [];
-  for (const p of listProducts(tenantId).filter((x) => (x.tipo || 'produto') === 'produto')) {
+async function recIndisponivel(tenantId, w, lojaConv) {
+  const s = await getSettings(tenantId); const out = [];
+  for (const p of (await listProducts(tenantId)).filter((x) => (x.tipo || 'produto') === 'produto')) {
     const disp = disponibilidade(p, s); if (disp.ok) continue;
     const views = w.buscas[p.id] || 0; if (views < 15) continue;
     const perdido = round2(views * lojaConv * p.preco);
@@ -153,14 +154,15 @@ function recIndisponivel(tenantId, w, lojaConv) {
   return out.slice(0, 2);
 }
 
-function recDestaque(tenantId, w, lojaConv) {
-  const s = getSettings(tenantId); const atuais = s.destaques_home || [];
-  const top = topVendidos(tenantId, w, 1)[0]; if (!top || top.vendas < 3) return [];
-  const p = getProduct(top.id); const taxa = (w.buscas[p.id] || 0) ? top.vendas / w.buscas[p.id] : null;
+async function recDestaque(tenantId, w, lojaConv) {
+  const s = await getSettings(tenantId); const atuais = s.destaques_home || [];
+  const top = (await topVendidos(tenantId, w, 1))[0]; if (!top || top.vendas < 3) return [];
+  const p = await getProduct(top.id); const taxa = (w.buscas[p.id] || 0) ? top.vendas / w.buscas[p.id] : null;
   if (taxa !== null && taxa < lojaConv) return [];
   if (atuais[0] === top.id) return [];
   const totalVendas = sum(Object.values(w.vendas)) || 1;
-  const nomes = atuais.map((id) => getProduct(id)?.nome).filter(Boolean);
+  const nomes = [];
+  for (const id of atuais) { const q = await getProduct(id); if (q) nomes.push(q.nome); }
   return [montar({ id: `destaque:${p.id}`, tipo: 'destaque', prioridade: 3, titulo: `Colocar ${p.nome} em primeiro nos destaques`,
     dado: `${top.vendas} vendas nos últimos 7 dias, ${pct(top.vendas / totalVendas, 0)} do total da loja.`,
     fatos: [`Página inicial: ${pct(w.share_home, 0)} das visitas passaram por ela.`, nomes.length ? `Destaques atuais: ${nomes.join(', ')}.` : 'Ainda não há produtos definidos para a página inicial.', taxa !== null ? `Taxa de compra do produto: ${pct(taxa)} (média da loja: ${pct(lojaConv)}).` : 'Visualizações do produto não foram medidas.'],
@@ -173,9 +175,9 @@ function recDestaque(tenantId, w, lojaConv) {
     limitacoes: w.visitas < AMOSTRA_MINIMA_VISITAS ? ['Poucas visitas na semana para afirmar o efeito dos destaques.'] : [] })];
 }
 
-function recVisitasSemVenda(tenantId, w, lojaConv) {
-  const s = getSettings(tenantId); const out = [];
-  for (const p of listProducts(tenantId).filter((x) => (x.tipo || 'produto') === 'produto')) {
+async function recVisitasSemVenda(tenantId, w, lojaConv) {
+  const s = await getSettings(tenantId); const out = [];
+  for (const p of (await listProducts(tenantId)).filter((x) => (x.tipo || 'produto') === 'produto')) {
     if (!disponibilidade(p, s).ok) continue;
     const views = w.buscas[p.id] || 0; if (views < AMOSTRA_MINIMA_PRODUTO) continue;
     const taxa = (w.vendas[p.id] || 0) / views;
@@ -191,10 +193,11 @@ function recVisitasSemVenda(tenantId, w, lojaConv) {
   return out.slice(0, 2);
 }
 
-function recCampanha(tenantId, w) {
-  const cands = listProducts(tenantId).filter((p) => (p.tipo || 'produto') === 'produto' && disponibilidade(p, getSettings(tenantId)).ok)
-    .map((p) => ({ p, a: analisarProduto(tenantId, p) })).filter((x) => x.a.mc_pct != null && x.a.mc_pct >= 0.45 && (w.vendas[x.p.id] || 0) >= 2)
-    .sort((x, y) => y.a.mc - x.a.mc)[0];
+async function recCampanha(tenantId, w) {
+  const s = await getSettings(tenantId);
+  const avaliados = [];
+  for (const p of (await listProducts(tenantId)).filter((p) => (p.tipo || 'produto') === 'produto' && disponibilidade(p, s).ok)) avaliados.push({ p, a: await analisarProduto(tenantId, p) });
+  const cands = avaliados.filter((x) => x.a.mc_pct != null && x.a.mc_pct >= 0.45 && (w.vendas[x.p.id] || 0) >= 2).sort((x, y) => y.a.mc - x.a.mc)[0];
   if (!cands) return [];
   const { p, a } = cands;
   return [montar({ id: `campanha:${p.id}`, tipo: 'campanha', prioridade: 5, titulo: `${p.nome} pode entrar em campanha`,
@@ -209,9 +212,9 @@ function recCampanha(tenantId, w) {
     limitacoes: ['A margem usa as fichas de custo cadastradas; sem elas o cálculo é parcial.'] })];
 }
 
-function recReposicao(tenantId, hoje) {
+async function recReposicao(tenantId, hoje) {
   // importado de alex.js (função de cálculo de compras); feito por injeção para evitar ciclo
-  const c = comprasDe(tenantId, hoje); const linhas = c.linhas.filter((l) => l.sugerido > 0).slice(0, 3);
+  const c = await comprasDe(tenantId, hoje); const linhas = c.linhas.filter((l) => l.sugerido > 0).slice(0, 3);
   if (!linhas.length) return [];
   return [montar({ id: 'reposicao', tipo: 'reposicao', prioridade: 6, titulo: 'Flores e insumos que precisam de reposição',
     dado: `Previsão de consumo para ${c.periodo.dias} dias com base nas vendas: ${linhas.map((l) => `${l.insumo} (~${l.sugerido} ${l.unidade})`).join(', ')}.`,
@@ -228,34 +231,36 @@ let comprasDe = () => ({ linhas: [], limitacoes: [], periodo: { dias: 0 } });
 export function registrarCompras(fn) { comprasDe = fn; }
 
 /** Todas as recomendações atuais da loja, por prioridade. Não grava nada. */
-export function gerarRecomendacoes(tenantId, hoje = localDate()) {
+export async function gerarRecomendacoes(tenantId, hoje = localDate()) {
   const fim = addDays(hoje, -1);
-  const w = janela(tenantId, fim, 7);
+  const w = await janela(tenantId, fim, 7);
   const lojaConv = w.conversao_produtos;
   const recs = [
-    ...recQueda(tenantId, fim, lojaConv),
-    ...recIndisponivel(tenantId, w, lojaConv),
-    ...recDestaque(tenantId, w, lojaConv),
-    ...recVisitasSemVenda(tenantId, w, lojaConv),
-    ...recCampanha(tenantId, w),
-    ...recReposicao(tenantId, hoje),
+    ...(await recQueda(tenantId, fim, lojaConv)),
+    ...(await recIndisponivel(tenantId, w, lojaConv)),
+    ...(await recDestaque(tenantId, w, lojaConv)),
+    ...(await recVisitasSemVenda(tenantId, w, lojaConv)),
+    ...(await recCampanha(tenantId, w)),
+    ...(await recReposicao(tenantId, hoje)),
   ];
   return recs.sort((a, b) => a.prioridade - b.prioridade).slice(0, 6);
 }
 
 /** Grava as recomendações como tarefas (sem duplicar; atualiza os números das abertas). */
-export function registrarRecomendacoes(tenantId, hoje = localDate()) {
-  return gerarRecomendacoes(tenantId, hoje).map((r) => {
-    const aberta = listTasks(tenantId, { tipo: 'recomendacao' }).find((t) => t.titulo === r.titulo && ['aguardando_dono', 'aberta'].includes(t.status));
-    if (aberta) return updateTask(aberta.id, { recomendacao: { ...r, acompanhamento: aberta.recomendacao?.acompanhamento || r.acompanhamento } });
-    return createTask(tenantId, { responsavel: 'alex', solicitante: 'alex', tipo: 'recomendacao', titulo: r.titulo, detalhes: r.recomendacao, acao: r.autorizacao.acao, extra: { recomendacao: r } });
-  });
+export async function registrarRecomendacoes(tenantId, hoje = localDate()) {
+  const saida = [];
+  for (const r of await gerarRecomendacoes(tenantId, hoje)) {
+    const aberta = (await listTasks(tenantId, { tipo: 'recomendacao' })).find((t) => t.titulo === r.titulo && ['aguardando_dono', 'aberta'].includes(t.status));
+    if (aberta) { saida.push(await updateTask(aberta.id, { recomendacao: { ...r, acompanhamento: aberta.recomendacao?.acompanhamento || r.acompanhamento } })); continue; }
+    saida.push(await createTask(tenantId, { responsavel: 'alex', solicitante: 'alex', tipo: 'recomendacao', titulo: r.titulo, detalhes: r.recomendacao, acao: r.autorizacao.acao, extra: { recomendacao: r } }));
+  }
+  return saida;
 }
 
 // ---------------------------------------------------------------- execução e acompanhamento
 /** Valor da métrica de acompanhamento numa janela de 7 dias terminando em `fim`. */
-export function medir(tenantId, metrica, fim) {
-  const w = janela(tenantId, fim, 7);
+export async function medir(tenantId, metrica, fim) {
+  const w = await janela(tenantId, fim, 7);
   if (metrica.nome === 'faturamento') return w.faturamento;
   if (metrica.nome === 'vendas_produto') return w.vendas[metrica.produto_id] || 0;
   if (metrica.nome === 'conversao_produto') { const v = w.buscas[metrica.produto_id] || 0; return v ? (w.vendas[metrica.produto_id] || 0) / v : 0; }
@@ -263,40 +268,40 @@ export function medir(tenantId, metrica, fim) {
 }
 
 /** Executa a ação autorizada (ou marca como feita) e fixa a linha de base do acompanhamento. */
-export function executarRecomendacao(tenantId, taskId, hoje = localDate()) {
-  const t = getTask(taskId);
+export async function executarRecomendacao(tenantId, taskId, hoje = localDate()) {
+  const t = await getTask(taskId);
   if (!t || t.tenant_id !== tenantId) throw new Error('Recomendação não encontrada');
   const rec = t.recomendacao; const fim = addDays(hoje, -1);
   let r;
   if (!rec?.autorizacao?.acao) {
     r = { texto: 'Marcada como feita. Vou acompanhar o resultado.' };
   } else if (rec.autorizacao.acao.acao === 'pedir_campanha') {
-    const p = getProduct(rec.autorizacao.acao.params.produto_id);
-    createTask(tenantId, { responsavel: 'caio', solicitante: 'alex', tipo: 'pedido', titulo: `Propor campanha para ${p?.nome || 'produto'}`, detalhes: 'Pedido do Alex com base em margem e vendas. Respeitar o teto de gasto.' });
+    const p = await getProduct(rec.autorizacao.acao.params.produto_id);
+    await createTask(tenantId, { responsavel: 'caio', solicitante: 'alex', tipo: 'pedido', titulo: `Propor campanha para ${p?.nome || 'produto'}`, detalhes: 'Pedido do Alex com base em margem e vendas. Respeitar o teto de gasto.' });
     r = { executado: true, texto: `Pedi ao Caio uma proposta de campanha para ${p?.nome}. Ela aparece em Tarefas para sua aprovação.` };
   } else {
-    r = executar(tenantId, rec.autorizacao.acao.acao, rec.autorizacao.acao.params, { comando: t.titulo, confirmado: true });
+    r = await executar(tenantId, rec.autorizacao.acao.acao, rec.autorizacao.acao.params, { comando: t.titulo, confirmado: true });
   }
   const revisar = addDays(hoje, 7);
-  const acomp = { ...rec.acompanhamento, revisar_em: revisar, linha_base: { valor: medir(tenantId, rec.acompanhamento.metrica, fim), janela: `${addDays(fim, -6)} a ${fim}` } };
-  updateTask(taskId, { status: 'concluida', resultado: r.texto, executada_em: now(), change_id: r.change_id, recomendacao: { ...rec, acompanhamento: acomp } }, 'dono');
+  const acomp = { ...rec.acompanhamento, revisar_em: revisar, linha_base: { valor: await medir(tenantId, rec.acompanhamento.metrica, fim), janela: `${addDays(fim, -6)} a ${fim}` } };
+  await updateTask(taskId, { status: 'concluida', resultado: r.texto, executada_em: now(), change_id: r.change_id, recomendacao: { ...rec, acompanhamento: acomp } }, 'dono');
   log(tenantId, 'alex', `Acompanhamento iniciado: ${rec.titulo}. Revisão em ${fmtDia(revisar)}.`, { type: 'acompanhamento' });
   return r;
 }
 
 /** Compara a janela antes (fixada na execução) com a janela depois, de mesmo tamanho. */
-export function revisarRecomendacoes(tenantId, hoje = localDate()) {
-  const devidas = listTasks(tenantId, { tipo: 'recomendacao', status: 'concluida' })
+export async function revisarRecomendacoes(tenantId, hoje = localDate()) {
+  const devidas = (await listTasks(tenantId, { tipo: 'recomendacao', status: 'concluida' }))
     .filter((t) => !t.revisada && t.recomendacao?.acompanhamento?.revisar_em && t.recomendacao.acompanhamento.revisar_em <= hoje);
   for (const t of devidas) {
     const acomp = t.recomendacao.acompanhamento; const metrica = acomp.metrica;
-    if (!metrica?.nome) { updateTask(t.id, { revisada: true, revisao: { em: now(), texto: 'Esta recomendação não tem medição automática. Confirme o resultado na aba Loja.' } }); continue; }
-    const antes = acomp.linha_base?.valor; const depois = medir(tenantId, metrica, addDays(acomp.revisar_em, -1));
+    if (!metrica?.nome) { await updateTask(t.id, { revisada: true, revisao: { em: now(), texto: 'Esta recomendação não tem medição automática. Confirme o resultado na aba Loja.' } }); continue; }
+    const antes = acomp.linha_base?.valor; const depois = await medir(tenantId, metrica, addDays(acomp.revisar_em, -1));
     let veredito = 'ficou parecido';
     if (antes > 0 && depois != null) { const d = depois / antes - 1; if (d >= 0.1) veredito = `subiu ${sg(d)}`; else if (d <= -0.1) veredito = `caiu ${sg(d)}`; }
     else if (antes === 0 && depois > 0) veredito = 'saiu do zero';
     const texto = `Antes (${acomp.linha_base?.janela}): ${fmt(antes)}. Depois (7 dias até ${fmtDia(addDays(acomp.revisar_em, -1))}): ${fmt(depois)}. Resultado: ${veredito}. Isso compara duas semanas; não prova que a mudança causou a diferença, porque sazonalidade, anúncios e clima também mudam as vendas.`;
-    updateTask(t.id, { revisada: true, revisao: { em: now(), texto, antes, depois } });
+    await updateTask(t.id, { revisada: true, revisao: { em: now(), texto, antes, depois } });
     log(tenantId, 'alex', `Revisão de "${t.titulo}": ${veredito}`, { type: 'revisao' });
   }
   return devidas.length;
@@ -319,11 +324,11 @@ ${fatos}${hip}
 }
 
 // ---------------------------------------------------------------- perguntas diretas
-export function diagnosticoQueda(tenantId, hoje = localDate()) {
-  const fim = addDays(hoje, -1); const a = janela(tenantId, fim, 7); const b = janela(tenantId, addDays(fim, -7), 7);
+export async function diagnosticoQueda(tenantId, hoje = localDate()) {
+  const fim = addDays(hoje, -1); const a = await janela(tenantId, fim, 7); const b = await janela(tenantId, addDays(fim, -7), 7);
   const d = decomporVariacao(a, b);
   if (!d) return { texto: 'Ainda não tenho dados suficientes das duas semanas para comparar. Preciso de visitas e pedidos dos 14 últimos dias.', recomendacoes: [] };
-  const recs = gerarRecomendacoes(tenantId, hoje).filter((r) => ['queda', 'indisponivel', 'visitas_sem_venda', 'destaque'].includes(r.tipo));
+  const recs = (await gerarRecomendacoes(tenantId, hoje)).filter((r) => ['queda', 'indisponivel', 'visitas_sem_venda', 'destaque'].includes(r.tipo));
   const linhas = [
     `Faturamento: ${brl(a.faturamento)} nos últimos 7 dias, ${sg(d.variacao)} em relação às 7 anteriores.`,
     `Pelas partes: visitas ${sg(d.partes.visitas.efeito)}, taxa de compra ${sg(d.partes.conversao.efeito)}, ticket ${sg(d.partes.ticket.efeito)}. O maior peso foi ${ROTULO_PRINCIPAL[d.principal]}.`,
@@ -332,8 +337,8 @@ export function diagnosticoQueda(tenantId, hoje = localDate()) {
   return { texto: `${linhas.join('\n')}\n\n${recs.length ? recs.map((r, i) => formatarRecomendacao(r, i + 1)).join('\n\n') : 'Não encontrei causa clara nos dados disponíveis.'}`, recomendacoes: recs };
 }
 
-export function comparacaoSemana(tenantId, hoje = localDate()) {
-  const fim = addDays(hoje, -1); const a = janela(tenantId, fim, 7); const b = janela(tenantId, addDays(fim, -7), 7);
+export async function comparacaoSemana(tenantId, hoje = localDate()) {
+  const fim = addDays(hoje, -1); const a = await janela(tenantId, fim, 7); const b = await janela(tenantId, addDays(fim, -7), 7);
   const d = decomporVariacao(a, b);
   const linhas = [
     `Últimos 7 dias contra os 7 anteriores (${fmtDia(b.ini)}–${fmtDia(b.fim)}):`,
@@ -347,11 +352,14 @@ export function comparacaoSemana(tenantId, hoje = localDate()) {
   return { texto: linhas.join('\n') };
 }
 
-export function sugestoesDivulgacao(tenantId, hoje = localDate()) {
-  const fim = addDays(hoje, -1); const w = janela(tenantId, fim, 7); const lojaConv = w.conversao_produtos;
-  const s = getSettings(tenantId);
-  const cands = listProducts(tenantId).filter((p) => (p.tipo || 'produto') === 'produto' && disponibilidade(p, s).ok && (w.buscas[p.id] || 0) >= AMOSTRA_MINIMA_PRODUTO)
-    .map((p) => ({ p, views: w.buscas[p.id], vendas: w.vendas[p.id] || 0, taxa: (w.vendas[p.id] || 0) / w.buscas[p.id], a: analisarProduto(tenantId, p) }))
+export async function sugestoesDivulgacao(tenantId, hoje = localDate()) {
+  const fim = addDays(hoje, -1); const w = await janela(tenantId, fim, 7); const lojaConv = w.conversao_produtos;
+  const s = await getSettings(tenantId);
+  const candidatos = [];
+  for (const p of (await listProducts(tenantId)).filter((p) => (p.tipo || 'produto') === 'produto' && disponibilidade(p, s).ok && (w.buscas[p.id] || 0) >= AMOSTRA_MINIMA_PRODUTO)) {
+    candidatos.push({ p, views: w.buscas[p.id], vendas: w.vendas[p.id] || 0, taxa: (w.vendas[p.id] || 0) / w.buscas[p.id], a: await analisarProduto(tenantId, p) });
+  }
+  const cands = candidatos
     .filter((x) => x.taxa >= lojaConv && (x.a.mc_pct == null || x.a.mc_pct >= 0.35))
     .sort((x, y) => y.taxa - x.taxa).slice(0, 3);
   if (!cands.length) return { texto: 'Nenhum produto reúne os três critérios ao mesmo tempo: procura suficiente, boa taxa de compra e margem aceitável. Vale revisar preço e foto antes de divulgar.', pendente: null };
@@ -363,21 +371,28 @@ export function sugestoesDivulgacao(tenantId, hoje = localDate()) {
   };
 }
 
-export function analisePromocao(tenantId, produtoTexto, descontoPct = 10, hoje = localDate()) {
-  const P = finParams(tenantId); const w = janela(tenantId, addDays(hoje, -1), 7);
-  const s = getSettings(tenantId); const cap = s.capacidade_pedidos_dia;
+export async function analisePromocao(tenantId, produtoTexto, descontoPct = 10, hoje = localDate()) {
+  const w = await janela(tenantId, addDays(hoje, -1), 7);
+  const s = await getSettings(tenantId); const cap = s.capacidade_pedidos_dia;
   const ocupacao = w.dias ? (w.pedidos / w.dias) / cap : 0;
-  const ps = produtoTexto ? acharProduto(tenantId, produtoTexto) : [];
-  const alvos = ps.length === 1 ? [ps[0]] : listProducts(tenantId).filter((p) => (p.tipo || 'produto') === 'produto' && disponibilidade(p, s).ok)
-    .map((p) => ({ p, taxa: (w.buscas[p.id] || 0) ? (w.vendas[p.id] || 0) / w.buscas[p.id] : null, mc: analisarProduto(tenantId, p).mc_pct }))
-    .filter((x) => x.mc != null && x.mc >= 0.4).sort((x, y) => (x.taxa ?? 0) - (y.taxa ?? 0)).slice(0, 3).map((x) => x.p);
+  const ps = produtoTexto ? await acharProduto(tenantId, produtoTexto) : [];
+  let alvos;
+  if (ps.length === 1) alvos = [ps[0]];
+  else {
+    const cand = [];
+    for (const p of (await listProducts(tenantId)).filter((p) => (p.tipo || 'produto') === 'produto' && disponibilidade(p, s).ok)) {
+      cand.push({ p, taxa: (w.buscas[p.id] || 0) ? (w.vendas[p.id] || 0) / w.buscas[p.id] : null, mc: (await analisarProduto(tenantId, p)).mc_pct });
+    }
+    alvos = cand.filter((x) => x.mc != null && x.mc >= 0.4).sort((x, y) => (x.taxa ?? 0) - (y.taxa ?? 0)).slice(0, 3).map((x) => x.p);
+  }
   if (!alvos.length) return { texto: 'Não tenho custos cadastrados suficientes para avaliar uma promoção com segurança. Cadastre as fichas de custo na Sol primeiro.' };
-  const linhas = alvos.map((p) => {
-    const d = impactoDesconto(tenantId, { produto: p, descontoPct });
-    if (d.parcial && d.antes?.cmv == null) return `• ${p.nome}: sem custo cadastrado, não consigo calcular.`;
-    if (d.inviavel) return `• ${p.nome}: com ${descontoPct}% a margem fica negativa. Não recomendo.`;
-    return `• ${p.nome}: com ${descontoPct}% de desconto, a margem cai de ${brl(d.antes.mc)} para ${brl(d.depois.mc)} por unidade. Para ganhar o mesmo dinheiro, seria preciso vender ${pct(d.vendas_extra_necessarias, 0)} a mais.`;
-  });
+  const linhas = [];
+  for (const p of alvos) {
+    const d = await impactoDesconto(tenantId, { produto: p, descontoPct });
+    if (d.parcial && d.antes?.cmv == null) linhas.push(`• ${p.nome}: sem custo cadastrado, não consigo calcular.`);
+    else if (d.inviavel) linhas.push(`• ${p.nome}: com ${descontoPct}% a margem fica negativa. Não recomendo.`);
+    else linhas.push(`• ${p.nome}: com ${descontoPct}% de desconto, a margem cai de ${brl(d.antes.mc)} para ${brl(d.depois.mc)} por unidade. Para ganhar o mesmo dinheiro, seria preciso vender ${pct(d.vendas_extra_necessarias, 0)} a mais.`);
+  }
   const capa = ocupacao > 0.85 ? `\nA produção já está em ${pct(ocupacao, 0)} da capacidade diária. Uma promoção pode gerar mais pedidos do que a loja consegue entregar.` : `\nA produção está em ${pct(ocupacao, 0)} da capacidade diária, então há folga para mais pedidos.`;
   return {
     texto: `Análise de promoção (${descontoPct}% de desconto):\n${linhas.join('\n')}${capa}\n\nFato: os números acima usam as fichas de custo e o rateio da Sol. Hipótese: a promoção só compensa se trouxer volume novo, o que ainda não foi testado. Não prometo resultado.`,
@@ -395,13 +410,13 @@ const norm = (s) => String(s ?? '').normalize('NFD').replace(/\p{Diacritic}/gu, 
 
 /** Atualiza as vendas por página e por produto a partir da iFlores (analytics). */
 export async function importarAnalytics(tenantId, hoje = localDate()) {
-  const cli = new IFloresClient(getTenant(tenantId));
+  const cli = new IFloresClient(await getTenant(tenantId));
   if (!cli.conectado) return { importados: 0 };
   const r = await cli.analytics(addDays(hoje, -14), addDays(hoje, -1));
   let n = 0;
   for (const d of r?.dias || []) {
-    const id = `${tenantId}:${d.data}`; const atual = db().get('dias', id) || { id, tenant_id: tenantId, data: d.data, visitas: 0, carrinhos: 0, checkouts: 0, pedidos: 0, faturamento: 0, vendas: {}, buscas: {}, descontos: 0 };
-    db().put('dias', { ...atual, visitas: d.visitas ?? atual.visitas, carrinhos: d.carrinhos ?? atual.carrinhos, checkouts: d.checkouts ?? atual.checkouts, visitas_pagina: d.visitas_pagina ?? atual.visitas_pagina, buscas: d.buscas ?? atual.buscas });
+    const id = `${tenantId}:${d.data}`; const atual = (await db().get('dias', id)) || { id, tenant_id: tenantId, data: d.data, visitas: 0, carrinhos: 0, checkouts: 0, pedidos: 0, faturamento: 0, vendas: {}, buscas: {}, descontos: 0 };
+    await db().put('dias', { ...atual, visitas: d.visitas ?? atual.visitas, carrinhos: d.carrinhos ?? atual.carrinhos, checkouts: d.checkouts ?? atual.checkouts, visitas_pagina: d.visitas_pagina ?? atual.visitas_pagina, buscas: d.buscas ?? atual.buscas });
     n++;
   }
   return { importados: n };

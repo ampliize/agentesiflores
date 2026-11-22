@@ -79,29 +79,29 @@ export const DEFAULTS = {
 
 const cfgId = (t, a) => `${t}:${a}`;
 
-export function getConfig(tenantId, agent) {
-  const doc = db().get('configs', cfgId(tenantId, agent));
+export async function getConfig(tenantId, agent) {
+  const doc = await db().get('configs', cfgId(tenantId, agent));
   const { id, tenant_id, agent: _a, created_at, updated_at, ...cfg } = doc || {};
   return mergeDeep(DEFAULTS[agent], cfg);
 }
 
-export function saveConfig(tenantId, agent, patch) {
-  const current = getConfig(tenantId, agent);
+export async function saveConfig(tenantId, agent, patch) {
+  const current = await getConfig(tenantId, agent);
   const merged = mergeDeep(current, patch || {});
-  db().put('configs', { id: cfgId(tenantId, agent), tenant_id: tenantId, agent, ...merged });
+  await db().put('configs', { id: cfgId(tenantId, agent), tenant_id: tenantId, agent, ...merged });
   return getConfig(tenantId, agent);
 }
 
 // ---------- contratação (individual ou combo) ----------
-export function getTenant(tenantId) { return db().get('tenants', tenantId); }
+export async function getTenant(tenantId) { return db().get('tenants', tenantId); }
 
-export function hired(tenantId, agent) { return !!getTenant(tenantId)?.plano?.agentes?.[agent]; }
+export async function hired(tenantId, agent) { return !!(await getTenant(tenantId))?.plano?.agentes?.[agent]; }
 /** Agente contratado e ligado. */
-export function active(tenantId, agent) { return hired(tenantId, agent) && getConfig(tenantId, agent).enabled; }
+export async function active(tenantId, agent) { return (await hired(tenantId, agent)) && (await getConfig(tenantId, agent)).enabled; }
 
-export function setHired(tenantId, agent, value) {
-  const t = getTenant(tenantId);
+export async function setHired(tenantId, agent, value) {
+  const t = await getTenant(tenantId);
   const agentes = { ...(t.plano?.agentes || {}), [agent]: !!value };
-  db().put('tenants', { ...t, plano: { ...(t.plano || {}), agentes, atualizado_em: now() } });
+  await db().put('tenants', { ...t, plano: { ...(t.plano || {}), agentes, atualizado_em: now() } });
   return agentes;
 }

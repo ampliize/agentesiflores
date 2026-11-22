@@ -7,8 +7,12 @@ import { handle } from '../src/core/api.js';
 import { bus } from '../src/core/events.js';
 
 init(createMemoryStore());
-const tenantId = seedDemo();
-const ready = comLoja(tenantId, () => rotinas(tenantId, { forcar: true }));
+let tenantId = null;
+// a loja de demonstração é criada uma vez; as requisições esperam por ela
+const ready = (async () => {
+  tenantId = await seedDemo();
+  await comLoja(tenantId, () => rotinas(tenantId, { forcar: true }));
+})();
 window.__EQ_TOKEN = 'demo';
 
 const realFetch = window.fetch.bind(window);
@@ -21,6 +25,12 @@ window.fetch = async (input, opts = {}) => {
   const r = await comLoja(tenantId, () => handle({ method: (opts.method || 'GET').toUpperCase(), path, query: Object.fromEntries(url.searchParams), body: opts.body ? JSON.parse(opts.body) : null, tenantId }));
   return new Response(JSON.stringify(r.body), { status: r.status, headers: { 'content-type': 'application/json' } });
 };
-window.EventSource = class { constructor() { this.off = bus.on(`t:${tenantId}`, (ev) => this.onmessage?.({ data: JSON.stringify(ev) })); } close() { this.off(); } };
+window.EventSource = class {
+  constructor() {
+    this.off = () => {};
+    ready.then(() => { this.off = bus.on(`t:${tenantId}`, (ev) => this.onmessage?.({ data: JSON.stringify(ev) })); });
+  }
+  close() { this.off(); }
+};
 // rotinas periódicas (publicação agendada, recuperação de conversas...)
-setInterval(() => comLoja(tenantId, () => rotinas(tenantId)).catch(() => {}), 30000);
+setInterval(() => ready.then(() => comLoja(tenantId, () => rotinas(tenantId))).catch(() => {}), 30000);

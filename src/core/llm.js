@@ -22,15 +22,15 @@ const FALLBACK = { betas: ['server-side-fallback-2026-07-01'], fallbacks: 'defau
 // ---------- limite de uso por loja (custo e abuso, sem afetar as outras lojas) ----------
 const LIMITE = () => Number(process.env.IA_LIMITE_DIARIO_POR_LOJA || 400);
 function idUso(t) { return `${t}:${new Date().toISOString().slice(0, 10)}`; }
-function verificarLimite() {
+async function verificarLimite() {
   const t = lojaAtual(); if (!t) return;
-  const u = db().get('uso_ia', idUso(t));
+  const u = await db().get('uso_ia', idUso(t));
   if (u && u.chamadas >= LIMITE()) throw Object.assign(new Error('Limite diário de IA desta loja atingido'), { status: 429 });
 }
-function registrarUso(entrada, saida) {
+async function registrarUso(entrada, saida) {
   const t = lojaAtual(); if (!t) return;
-  const id = idUso(t); const u = db().get('uso_ia', id) || { id, tenant_id: t, data: id.slice(-10), chamadas: 0, tokens_entrada: 0, tokens_saida: 0 };
-  db().put('uso_ia', { ...u, chamadas: u.chamadas + 1, tokens_entrada: u.tokens_entrada + (entrada || 0), tokens_saida: u.tokens_saida + (saida || 0), provedor: PROVEDOR(), modelo: MODEL() });
+  const id = idUso(t); const u = (await db().get('uso_ia', id)) || { id, tenant_id: t, data: id.slice(-10), chamadas: 0, tokens_entrada: 0, tokens_saida: 0 };
+  await db().put('uso_ia', { ...u, chamadas: u.chamadas + 1, tokens_entrada: u.tokens_entrada + (entrada || 0), tokens_saida: u.tokens_saida + (saida || 0), provedor: PROVEDOR(), modelo: MODEL() });
 }
 
 // ---------- ferramentas: formato de cada provedor ----------
@@ -61,9 +61,9 @@ async function anthropicToolLoop({ system, messages, tools, effort, maxTurns, ma
   const defs = tools.map(anthropicTool);
   const history = [...messages];
   for (let turn = 0; turn < maxTurns; turn++) {
-    verificarLimite();
+    await verificarLimite();
     const res = await getAnthropic().beta.messages.create({ model: MODEL(), max_tokens: maxTokens, system, tools: defs, messages: history, output_config: { effort }, ...FALLBACK });
-    registrarUso(res.usage?.input_tokens, res.usage?.output_tokens);
+    await registrarUso(res.usage?.input_tokens, res.usage?.output_tokens);
     if (res.stop_reason === 'refusal') return { text: '', refused: true, messages: history };
     history.push({ role: 'assistant', content: res.content });
     if (res.stop_reason === 'pause_turn') continue;
@@ -82,9 +82,9 @@ async function openaiToolLoop({ system, messages, tools, maxTurns, maxTokens, tr
   const defs = tools.map(openaiTool);
   const hist = [{ role: 'system', content: system }, ...messages.map((m) => ({ role: m.role, content: typeof m.content === 'string' ? m.content : textoDeBlocos(m.content) }))];
   for (let turn = 0; turn < maxTurns; turn++) {
-    verificarLimite();
+    await verificarLimite();
     const res = await getOpenAI().chat.completions.create({ model: MODEL(), messages: hist, tools: defs, max_completion_tokens: maxTokens });
-    registrarUso(res.usage?.prompt_tokens, res.usage?.completion_tokens);
+    await registrarUso(res.usage?.prompt_tokens, res.usage?.completion_tokens);
     const msg = res.choices[0]?.message;
     if (!msg) return { text: '', messages: hist, exhausted: true };
     hist.push(msg);
@@ -103,14 +103,14 @@ async function openaiToolLoop({ system, messages, tools, maxTurns, maxTokens, tr
 
 /** Uma chamada com saída JSON garantida por schema (planejamento, análises, relatórios). */
 export async function structured({ system, prompt, schema, effort = 'medium', maxTokens = 16000 }) {
-  verificarLimite();
+  await verificarLimite();
   if (PROVEDOR() === 'openai') {
     const res = await getOpenAI().chat.completions.create({
       model: MODEL(), max_completion_tokens: maxTokens,
       messages: [{ role: 'system', content: system }, { role: 'user', content: prompt }],
       response_format: { type: 'json_schema', json_schema: { name: 'resposta', strict: true, schema } },
     });
-    registrarUso(res.usage?.prompt_tokens, res.usage?.completion_tokens);
+    await registrarUso(res.usage?.prompt_tokens, res.usage?.completion_tokens);
     const c = res.choices[0]?.message;
     if (c?.refusal) throw new Error('A IA recusou a solicitação');
     return JSON.parse(c?.content || 'null');
@@ -121,7 +121,7 @@ export async function structured({ system, prompt, schema, effort = 'medium', ma
     output_config: { effort, format: { type: 'json_schema', schema } },
     ...FALLBACK,
   });
-  registrarUso(res.usage?.input_tokens, res.usage?.output_tokens);
+  await registrarUso(res.usage?.input_tokens, res.usage?.output_tokens);
   if (res.stop_reason === 'refusal') throw new Error('A IA recusou a solicitação');
   if (res.stop_reason === 'max_tokens') throw new Error('Resposta da IA truncada (max_tokens)');
   return JSON.parse(textoDeBlocos(res.content));

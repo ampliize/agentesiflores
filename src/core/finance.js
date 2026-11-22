@@ -12,8 +12,8 @@ import { getConfig } from './team.js';
 import { listProducts, insumoMap, getProduct } from './catalog.js';
 import { brl, pct, round2, localDate, addDays } from './util.js';
 
-export function params(tenantId) {
-  const c = getConfig(tenantId, 'sol');
+export async function params(tenantId) {
+  const c = await getConfig(tenantId, 'sol');
   const fixos = (c.custos_fixos || []).reduce((s, x) => s + (Number(x.valor) || 0), 0);
   const v = c.variaveis || {};
   const varPct = ((v.taxa_pagamento_pct || 0) + (v.impostos_pct || 0) + (v.comissao_pct || 0) + (v.outros_pct || 0)) / 100;
@@ -46,9 +46,9 @@ export function cmvProduto(p, imap) {
 }
 
 /** Análise completa de um produto (ou de um preço hipotético). */
-export function analisarProduto(tenantId, p, { preco, cmv: cmvOverride } = {}) {
-  const P = params(tenantId);
-  const c = cmvOverride != null ? { valor: cmvOverride, fonte: 'valor informado na conversa', itens: [], faltando: [] } : cmvProduto(p, insumoMap(tenantId));
+export async function analisarProduto(tenantId, p, { preco, cmv: cmvOverride } = {}) {
+  const P = await params(tenantId);
+  const c = cmvOverride != null ? { valor: cmvOverride, fonte: 'valor informado na conversa', itens: [], faltando: [] } : cmvProduto(p, await insumoMap(tenantId));
   const pr = preco ?? p?.preco;
   const faltando = [...c.faltando];
   if (!P.fixos) faltando.push('custos fixos da loja');
@@ -66,8 +66,8 @@ export function analisarProduto(tenantId, p, { preco, cmv: cmvOverride } = {}) {
 }
 
 /** Preço mínimo, de equilíbrio e sugerido para um custo de produção. */
-export function precoSugerido(tenantId, { custo, margemAlvoPct }) {
-  const P = params(tenantId);
+export async function precoSugerido(tenantId, { custo, margemAlvoPct }) {
+  const P = await params(tenantId);
   const m = margemAlvoPct != null ? margemAlvoPct / 100 : P.margemAlvo;
   const premissas = [`Custo de produção (CMV) considerado: ${brl(custo)}.`, ...premissasBase(P), `Resultado desejado após o rateio: ${pct(m)} do preço.`];
   const faltando = P.fixos ? [] : ['custos fixos da loja'];
@@ -83,30 +83,32 @@ export function precoSugerido(tenantId, { custo, margemAlvoPct }) {
   }
   const arred = (v) => (v == null ? null : Math.ceil(v) - 0.1);
   const res = { custo, minimo: round2(minimo), equilibrio: round2(equilibrio), sugerido: sugerido && round2(sugerido), sugerido_arredondado: arred(sugerido), premissas, faltando, parcial: faltando.length > 0 };
-  if (sugerido) res.analise = analisarProduto(tenantId, null, { preco: res.sugerido_arredondado, cmv: custo });
+  if (sugerido) res.analise = await analisarProduto(tenantId, null, { preco: res.sugerido_arredondado, cmv: custo });
   return res;
 }
 
 /** Efeito de um desconto sobre a margem e quanto a mais seria preciso vender para compensar. */
-export function impactoDesconto(tenantId, { produto, preco, cmv, descontoPct }) {
+export async function impactoDesconto(tenantId, { produto, preco, cmv, descontoPct }) {
   const p = produto || null;
-  const antes = analisarProduto(tenantId, p, { preco: preco ?? p?.preco, cmv });
+  const antes = await analisarProduto(tenantId, p, { preco: preco ?? p?.preco, cmv });
   if (antes.cmv == null) return { parcial: true, faltando: antes.faltando, premissas: antes.premissas };
   const novoPreco = antes.preco * (1 - descontoPct / 100);
-  const depois = analisarProduto(tenantId, p, { preco: novoPreco, cmv: antes.cmv });
+  const depois = await analisarProduto(tenantId, p, { preco: novoPreco, cmv: antes.cmv });
   const extra = depois.mc > 0 ? antes.mc / depois.mc - 1 : null;
   return { produto: antes.produto, desconto_pct: descontoPct, antes, depois, vendas_extra_necessarias: extra, inviavel: depois.mc <= 0, premissas: antes.premissas, parcial: antes.parcial, faltando: antes.faltando };
 }
 
-export function margens(tenantId) {
-  return listProducts(tenantId).filter((p) => (p.tipo || 'produto') === 'produto').map((p) => analisarProduto(tenantId, p));
+export async function margens(tenantId) {
+  const out = [];
+  for (const p of (await listProducts(tenantId)).filter((x) => (x.tipo || 'produto') === 'produto')) out.push(await analisarProduto(tenantId, p));
+  return out;
 }
 
 /** Resumo do período a partir das vendas registradas (dias + pedidos). */
-export function resumoPeriodo(tenantId, { dias = 30, fim = localDate() } = {}) {
+export async function resumoPeriodo(tenantId, { dias = 30, fim = localDate() } = {}) {
   const ini = addDays(fim, -dias + 1);
-  const rows = db().list('dias', tenantId, (d) => d.data >= ini && d.data <= fim);
-  const an = Object.fromEntries(margens(tenantId).map((a) => [a.produto_id, a]));
+  const rows = await db().list('dias', tenantId, (d) => d.data >= ini && d.data <= fim);
+  const an = Object.fromEntries((await margens(tenantId)).map((a) => [a.produto_id, a]));
   let fat = 0; let mc = 0; let descontos = 0; let pedidos = 0; let semCusto = 0;
   const porProduto = {};
   for (const r of rows) {
@@ -117,17 +119,17 @@ export function resumoPeriodo(tenantId, { dias = 30, fim = localDate() } = {}) {
       if (a?.mc != null) mc += a.mc * q; else semCusto += q;
     }
   }
-  mc -= descontos * (1 - params(tenantId).varPct);
-  const P = params(tenantId);
+  const P = await params(tenantId);
+  mc -= descontos * (1 - P.varPct);
   const fixosPeriodo = P.fixos * (dias / 30);
   return { inicio: ini, fim, dias, faturamento: round2(fat), pedidos, ticket: pedidos ? round2(fat / pedidos) : 0, descontos: round2(descontos), mc: round2(mc), mc_pct: fat ? mc / fat : 0, custos_fixos: round2(fixosPeriodo), resultado: round2(mc - fixosPeriodo), por_produto: porProduto, itens_sem_custo: semCusto };
 }
 
 /** "Por que estou vendendo mais e sobrando menos?" — compara dois períodos e aponta as causas. */
-export function diagnosticoMargem(tenantId, dias = 30) {
-  const atual = resumoPeriodo(tenantId, { dias });
-  const anterior = resumoPeriodo(tenantId, { dias, fim: addDays(atual.inicio, -1) });
-  const an = Object.fromEntries(margens(tenantId).map((a) => [a.produto_id, a]));
+export async function diagnosticoMargem(tenantId, dias = 30) {
+  const atual = await resumoPeriodo(tenantId, { dias });
+  const anterior = await resumoPeriodo(tenantId, { dias, fim: addDays(atual.inicio, -1) });
+  const an = Object.fromEntries((await margens(tenantId)).map((a) => [a.produto_id, a]));
   const causas = [];
   const dMc = atual.mc_pct - anterior.mc_pct;
   // efeito do mix: produtos de margem baixa ganhando participação
@@ -144,4 +146,4 @@ export function diagnosticoMargem(tenantId, dias = 30) {
   return { atual, anterior, causas };
 }
 
-export const analisarPorId = (tenantId, id) => analisarProduto(tenantId, getProduct(id));
+export const analisarPorId = async (tenantId, id) => analisarProduto(tenantId, await getProduct(id));
