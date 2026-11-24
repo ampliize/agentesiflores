@@ -21,6 +21,8 @@ import { ativarContexto, dentroDoLimite, porLoja } from './contexto.js';
 /** Store do servidor: Supabase quando configurado; memória só para desenvolvimento (não persiste). */
 function storePadrao() {
   if (process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_KEY) return createSupabaseStore();
+  // na Vercel não existe disco: sem Supabase, a loja perderia tudo a cada requisição
+  if (process.env.VERCEL) throw new Error('Defina SUPABASE_URL e SUPABASE_SERVICE_KEY nas variáveis da Vercel');
   console.warn('[aviso] SUPABASE_URL/SUPABASE_SERVICE_KEY não definidos: usando memória (os dados somem ao reiniciar).');
   return createMemoryStore();
 }
@@ -43,6 +45,15 @@ export function createApp({ store } = {}) {
   const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 
   app.get('/health', (_req, res) => res.json({ ok: true, ia: aiEnabled() ? MODEL() : 'demonstração' }));
+
+  // ---------- rotinas automáticas, chamadas pelo n8n (ou pelo cron) a cada poucos minutos ----------
+  app.post('/api/cron/rotinas', wrap(async (req, res) => {
+    const esperado = process.env.CRON_SECRET;
+    if (!esperado || req.get('authorization') !== `Bearer ${esperado}`) return res.status(401).json({ error: 'Não autorizado' });
+    const ids = (await db().list('tenants', null, (x) => x.status === 'active')).map((t) => t.id);
+    const erros = await porLoja(ids, (id) => comLoja(id, () => rotinas(id)));
+    res.json({ lojas: ids.length, erros });
+  }));
 
   // ---------- plataforma iFlores ----------
   const plataforma = (req, res, next) => (process.env.IFLORES_PLATFORM_KEY && req.get('x-platform-key') === process.env.IFLORES_PLATFORM_KEY ? next() : res.status(401).json({ error: 'X-Platform-Key inválida' }));

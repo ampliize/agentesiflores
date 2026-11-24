@@ -23,8 +23,11 @@ export async function porLoja(ids, fn, { concorrencia = Number(process.env.ROTIN
   const worker = async () => {
     while (fila.length) {
       const id = fila.shift();
-      try { await Promise.race([fn(id), new Promise((_, rej) => setTimeout(() => rej(new Error('tempo esgotado')), timeoutMs))]); }
+      let timer;
+      const limite = new Promise((_, rej) => { timer = setTimeout(() => rej(new Error('tempo esgotado')), timeoutMs); });
+      try { await Promise.race([fn(id), limite]); }
       catch (e) { erros.push({ id, erro: e.message }); }
+      finally { clearTimeout(timer); }
     }
   };
   await Promise.all(Array.from({ length: Math.min(concorrencia, ids.length) }, worker));

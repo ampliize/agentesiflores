@@ -1,0 +1,9 @@
+{
+  "rewrites": [{ "source": "/((?!docs/|media/|painel|health).*)", "destination": "/api/index" }],
+  "functions": {
+    "api/index.js": {
+      "includeFiles": "{docs/**,public/**}",
+      "maxDuration": 60
+    }
+  }
+}
