@@ -1,0 +1,48 @@
+/* Elementos da integração com a Equipe dos Sonhos, no mesmo estilo do front (vinho, creme, Georgia). */
+.head-btn { border: 1px solid #d9cdc2; background: transparent; border-radius: 8px; padding: 10px 14px; color: var(--ink); font-size: 12px; font-weight: 600; white-space: nowrap; display: inline-flex; align-items: center; gap: 6px; }
+.head-btn:hover { background: #f3eae4; }
+.head-primary { background: var(--wine); border-color: var(--wine); color: #fff; }
+.head-primary:hover { background: #8a2a48; }
+.badge:empty { display: none; }
+.badge { background: var(--wine); color: #fff; border-radius: 99px; padding: 1px 7px; font-size: 10px; }
+.head-primary .badge { background: #fff; color: var(--wine); }
+
+.task .acoes { display: flex; gap: 16px; }
+.task button:disabled { opacity: .5; cursor: progress; }
+.fatos { margin: 6px 0; padding-left: 16px; font-size: 12px; color: var(--muted); line-height: 1.6; }
+
+.conversa { margin-top: 16px; border-top: 1px solid var(--line); padding-top: 6px; }
+#msgs-alex { max-height: 260px; overflow: auto; }
+#msgs-alex .bubble { white-space: pre-wrap; }
+.sugestoes { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.sugestoes button { border: 1px solid var(--line); background: #fffcf8; color: var(--muted); padding: 6px 10px; border-radius: 20px; font-size: 11px; text-align: left; }
+.sugestoes button:hover { border-color: var(--wine); color: var(--wine); }
+
+.kpis { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin: 16px 0; }
+.kpi { border: 1px solid var(--line); border-radius: 10px; padding: 12px; background: #faf8f2; display: grid; gap: 2px; }
+.kpi small { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 1px; }
+.kpi b { font: 600 20px Georgia, serif; color: var(--ink); }
+.kpi .up { color: var(--green); font-size: 11px; font-weight: 700; }
+.kpi .down { color: #b3384f; font-size: 11px; font-weight: 700; }
+
+.plan-item small { color: var(--muted); font-size: 10px; }
+.pill { font-size: 10px; padding: 3px 8px; border-radius: 12px; background: #eee8df; color: var(--muted); align-self: center; white-space: nowrap; }
+.pill.ok { background: #e9eddf; color: #425f45; }
+
+.peca { border: 0; padding: 0; background: none; border-radius: 6px; overflow: hidden; }
+.peca img { width: 100%; height: 86px; object-fit: cover; display: block; transition: transform .2s; }
+.peca:hover img { transform: scale(1.04); }
+.peca-grande { width: 100%; border-radius: 10px; margin: 10px 0; }
+
+.funil { position: relative; display: flex; justify-content: space-between; gap: 10px; padding: 11px 12px; margin: 6px 0; border-radius: 8px; background: #faf8f2; overflow: hidden; font-size: 12px; }
+.funil span, .funil b { position: relative; z-index: 1; }
+.funil i { position: absolute; inset: 0 auto 0 0; background: #f0e2e6; }
+
+dialog .close { position: absolute; top: 12px; right: 14px; border: 0; background: none; font-size: 22px; color: var(--muted); }
+dialog { position: relative; }
+
+@media (max-width: 1000px) { .head-btn { padding: 8px 10px; } }
+@media (max-width: 760px) {
+  header { flex-wrap: wrap; height: auto; padding-block: 10px; gap: 10px; }
+  .head-btn { font-size: 11px; }
+}

@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#76213c">
+  <title>Minha equipe · iFlores</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🌷</text></svg>">
+  <link rel="stylesheet" href="/equipe/style.css">
+  <link rel="stylesheet" href="/equipe/catalog.css">
+  <link rel="stylesheet" href="/equipe/integracao.css">
+</head>
+<body>
+  <header>
+    <a class="brand" href="#">iFlores<span>✳</span></a>
+    <nav>
+      <button class="active" data-nav="team">Minha equipe</button>
+      <button data-nav="education">Educação</button>
+      <button data-nav="market">Marketplace</button>
+    </nav>
+    <span class="demo" id="modo">Equipe dos Sonhos</span>
+    <button class="head-btn" id="btn-tarefas" type="button">Tarefas <b class="badge" id="badge-tarefas"></b></button>
+    <button class="head-btn head-primary" id="btn-config" type="button">⚙ Configurações</button>
+    <button id="customize" class="avatar" aria-label="Personalizar a fachada">FF</button>
+  </header>
+  <main>
+    <section class="intro">
+      <div><h1>Minha equipe</h1><p>Escolha alguém da equipe para começar.</p></div>
+      <button class="outline" id="personalize">✎ Fachada da loja</button>
+    </section>
+    <div class="workspace">
+      <section class="store-card">
+        <div class="scene-top"><span><i></i> <b id="shop-title">Sua floricultura</b></span><span class="scene-note">Sua equipe digital</span></div>
+        <div id="scene">
+          <img class="shop-art" src="/equipe/shop-clean.webp" alt="Floricultura em pixel art com mesas de trabalho, flores e balcão">
+          <div class="shop-sign" id="sign"><b id="sign-name">Sua floricultura</b></div>
+          <button class="person traffic" data-person="traffic" aria-label="Abrir Caio, de anúncios"><span class="tag">Anúncios</span><canvas width="24" height="36" data-sprite="traffic"></canvas><span class="shadow"></span></button>
+          <button class="person manager selected" data-person="manager" aria-label="Abrir Alex, o gerente"><span class="tag">Gerente</span><canvas width="24" height="36" data-sprite="manager"></canvas><span class="shadow"></span></button>
+          <button class="person social" data-person="social" aria-label="Abrir Mari, de conteúdo"><span class="tag">Conteúdo</span><canvas width="24" height="36" data-sprite="social"></canvas><span class="shadow"></span></button>
+          <button class="person sales" data-person="sales" aria-label="Abrir o atendimento"><span class="tag">Atendimento</span><canvas width="24" height="36" data-sprite="sales"></canvas><span class="shadow"></span></button>
+          <div class="person florist" aria-label="Florista decorativa"><canvas width="24" height="36" data-sprite="florist"></canvas><span class="shadow"></span></div>
+        </div>
+        <div class="scene-bottom"><span>✦ Um clique para conversar com sua equipe</span><button id="motion">Pausar movimentos</button></div>
+      </section>
+      <aside id="panel" aria-live="polite"></aside>
+    </div>
+    <section class="footer-note"><small>Os números vêm da sua loja na iFlores · As sugestões aparecem no canto da tela · Nada é alterado sem a sua autorização</small></section>
+  </main>
+  <div id="toast" role="status"></div>
+  <dialog id="modal"><button class="close" id="close-modal" aria-label="Fechar">×</button><div id="modal-body"></div></dialog>
+  <script src="/equipe/equipe.js"></script>
+  <script src="/equipe/animation.js"></script>
+  <script src="/equipe/catalog.js"></script>
+  <script src="/alertas.js" defer></script>
+</body>
+</html>

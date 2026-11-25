@@ -133,7 +133,9 @@ export function createApp({ store } = {}) {
 
   app.use('/docs', express.static(path.resolve('docs')));
   app.use(express.static(path.resolve('public')));
-  app.get(['/', '/painel'], (_req, res) => res.sendFile(path.resolve('public/index.html')));
+  // vitrine da equipe (o que o lojista vê primeiro) e o painel completo, que abre por Tarefas e Configurações
+  app.get(['/', '/painel'], (_req, res) => res.sendFile(path.resolve('public/equipe/index.html')));
+  app.get('/painel/crm', (_req, res) => res.sendFile(path.resolve('public/index.html')));
   app.use((err, _req, res, _next) => { console.error(err); res.status(500).json({ error: err.message || 'Erro interno' }); });
   return app;
 }
