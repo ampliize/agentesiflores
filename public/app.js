@@ -83,7 +83,7 @@ async function equipe(soft = false) {
       <div class="card kpi"><div class="l">Esperando sua decisão</div><div class="v">${d.pendencias}</div><div class="d"><a href="#tarefas">ver tarefas</a></div></div>
     </div>
     <div class="team">
-      <div><div class="org-top">${agentCard(alex)}</div><div class="org-link"></div><div class="org-row" style="margin-top:14px">${['flora', 'mari', 'caio', 'sol'].map((k) => agentCard(d.equipe.find((a) => a.key === k))).join('')}</div>
+      <div><div class="org-top">${agentCard(alex)}</div><div class="org-link"></div><div class="org-row" style="margin-top:14px">${['flora', 'mari', 'caio', 'sol'].map((k) => d.equipe.find((a) => a.key === k)).filter(Boolean).map(agentCard).join('')}</div>
         <div class="card" style="margin-top:16px"><div class="row" style="margin-bottom:8px"><h3 class="grow" style="margin:0">Para você decidir</h3><a href="#tarefas" class="small">todas</a></div>
           <div class="decide">${dec.slice(0, 5).map((t) => `<div class="it" style="--c:${cor(t.responsavel)}"><div class="row">${av(t.responsavel)}<div class="grow"><b>${esc(t.titulo)}</b><div class="small muted">${t.tipo === 'recomendacao' ? 'Recomendação' : 'Sugestão'} de ${esc(AG[t.responsavel]?.nome)}${t.recomendacao?.autorizacao?.pergunta ? ` · ${esc(t.recomendacao.autorizacao.pergunta)}` : ''}</div></div></div><div class="row"><button class="btn sm primary" data-ok="${t.id}" type="button">${t.acao ? 'Aprovar e executar' : 'Marcar como feito'}</button><button class="btn sm" data-no="${t.id}" type="button">Recusar</button></div></div>`).join('') || '<div class="empty">Nada esperando por você.</div>'}</div></div>
       </div>
